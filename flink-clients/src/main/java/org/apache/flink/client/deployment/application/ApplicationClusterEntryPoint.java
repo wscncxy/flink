@@ -34,7 +34,7 @@ import org.apache.flink.runtime.entrypoint.ClusterEntrypoint;
 import org.apache.flink.runtime.entrypoint.component.DefaultDispatcherResourceManagerComponentFactory;
 import org.apache.flink.runtime.entrypoint.component.DispatcherResourceManagerComponentFactory;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerFactory;
-import org.apache.flink.runtime.rest.JobRestEndpointFactory;
+import org.apache.flink.runtime.rest.ApplicationRestEndpointFactory;
 import org.apache.flink.util.concurrent.ScheduledExecutor;
 
 import java.io.IOException;
@@ -74,7 +74,7 @@ public class ApplicationClusterEntryPoint extends ClusterEntrypoint {
                         ApplicationDispatcherLeaderProcessFactoryFactory.create(
                                 configuration, SessionDispatcherFactory.INSTANCE, program)),
                 resourceManagerFactory,
-                JobRestEndpointFactory.INSTANCE);
+                ApplicationRestEndpointFactory.INSTANCE);
     }
 
     @Override
@@ -117,9 +117,9 @@ public class ApplicationClusterEntryPoint extends ClusterEntrypoint {
     }
 
     @Override
-    protected void cleanupDirectories() throws IOException {
+    protected void cleanupDirectories(ShutdownBehaviour shutdownBehaviour) throws IOException {
         // Close the packaged program explicitly to clean up temporary jars.
         program.close();
-        super.cleanupDirectories();
+        super.cleanupDirectories(shutdownBehaviour);
     }
 }

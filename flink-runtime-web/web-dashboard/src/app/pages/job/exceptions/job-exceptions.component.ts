@@ -16,23 +16,38 @@
  * limitations under the License.
  */
 
-import { formatDate } from '@angular/common';
-import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
-import { distinctUntilChanged, flatMap, tap } from 'rxjs/operators';
+import { DatePipe, formatDate, KeyValuePipe, NgForOf, NgIf } from '@angular/common';
+import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef, OnDestroy } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+import { Subject } from 'rxjs';
+import { distinctUntilChanged, mergeMap, takeUntil, tap } from 'rxjs/operators';
 
-import { ExceptionInfoInterface, RootExceptionInfoInterface } from 'interfaces';
-import { JobService } from 'services';
+import { AutoResizeDirective } from '@flink-runtime-web/components/editor/auto-resize.directive';
+import { flinkEditorOptions } from '@flink-runtime-web/components/editor/editor-config';
+import { ExceptionInfo, RootExceptionInfo } from '@flink-runtime-web/interfaces';
+import { JobService } from '@flink-runtime-web/services';
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzCodeEditorModule, EditorOptions } from 'ng-zorro-antd/code-editor';
+import { NzIconModule } from 'ng-zorro-antd/icon';
+import { NzSelectModule } from 'ng-zorro-antd/select';
+import { NzTableModule } from 'ng-zorro-antd/table';
+import { NzTabsModule } from 'ng-zorro-antd/tabs';
+import { NzTagModule } from 'ng-zorro-antd/tag';
+import { NzTooltipModule } from 'ng-zorro-antd/tooltip';
+
+import { JobLocalService } from '../job-local.service';
 
 interface ExceptionHistoryItem {
   /**
    * List of concurrent exceptions that caused this failure.
    */
-  exceptions: ExceptionInfoInterface[];
+  exceptions: ExceptionInfo[];
 
   /**
    * An exception from the list, that is currently selected for rendering.
    */
-  selected: ExceptionInfoInterface;
+  selected: ExceptionInfo;
 
   /**
    * Should this failure be expanded in UI?
@@ -40,12 +55,12 @@ interface ExceptionHistoryItem {
   expand: boolean;
 }
 
-const stripConcurrentExceptions = function(rootException: RootExceptionInfoInterface): ExceptionInfoInterface {
+const stripConcurrentExceptions = function (rootException: RootExceptionInfo): ExceptionInfo {
   const { concurrentExceptions, ...mainException } = rootException;
   return mainException;
 };
 
-const markGlobalFailure = function(exception: ExceptionInfoInterface): ExceptionInfoInterface {
+const markGlobalFailure = function (exception: ExceptionInfo): ExceptionInfo {
   if (exception.taskName == null) {
     exception.taskName = '(global failure)';
   }
@@ -56,30 +71,66 @@ const markGlobalFailure = function(exception: ExceptionInfoInterface): Exception
   selector: 'flink-job-exceptions',
   templateUrl: './job-exceptions.component.html',
   styleUrls: ['./job-exceptions.component.less'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [
+    NzTabsModule,
+    NzCodeEditorModule,
+    AutoResizeDirective,
+    NzTableModule,
+    NgForOf,
+    DatePipe,
+    NzSelectModule,
+    NzTooltipModule,
+    NgIf,
+    FormsModule,
+    NzIconModule,
+    NzButtonModule,
+    NzTagModule,
+    KeyValuePipe
+  ]
 })
-export class JobExceptionsComponent implements OnInit {
-  rootException = '';
-  exceptionHistory: ExceptionHistoryItem[] = [];
-  truncated = false;
-  isLoading = false;
-  maxExceptions = 0;
-  total = 0;
+export class JobExceptionsComponent implements OnInit, OnDestroy {
+  public readonly trackByTimestamp = (_: number, node: ExceptionInfo): number => node.timestamp;
 
-  trackExceptionBy(_: number, node: ExceptionInfoInterface): number {
-    return node.timestamp;
+  public rootException = '';
+  public exceptionHistory: ExceptionHistoryItem[] = [];
+  public truncated = false;
+  public isLoading = false;
+  public maxExceptions = 0;
+  public total = 0;
+  public editorOptions: EditorOptions = flinkEditorOptions;
+
+  private readonly destroy$ = new Subject<void>();
+
+  constructor(
+    private readonly jobService: JobService,
+    private readonly jobLocalService: JobLocalService,
+    private readonly cdr: ChangeDetectorRef,
+    private readonly router: Router
+  ) {}
+
+  public ngOnInit(): void {
+    this.loadMore();
   }
-  loadMore(): void {
+
+  public ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  public loadMore(): void {
     this.isLoading = true;
     this.maxExceptions += 10;
-    this.jobService.jobDetail$
+    this.jobLocalService
+      .jobDetailChanges()
       .pipe(
         distinctUntilChanged((pre, next) => pre.jid === next.jid),
-        flatMap(job => this.jobService.loadExceptions(job.jid, this.maxExceptions)),
+        mergeMap(job => this.jobService.loadExceptions(job.jid, this.maxExceptions)),
         tap(() => {
           this.isLoading = false;
           this.cdr.markForCheck();
-        })
+        }),
+        takeUntil(this.destroy$)
       )
       .subscribe(data => {
         // @ts-ignore
@@ -104,9 +155,9 @@ export class JobExceptionsComponent implements OnInit {
       });
   }
 
-  constructor(private jobService: JobService, private cdr: ChangeDetectorRef) {}
-
-  ngOnInit(): void {
-    this.loadMore();
+  public navigateTo(taskManagerId: string | null): void {
+    if (taskManagerId !== null) {
+      this.router.navigate(['task-manager', taskManagerId, 'metrics']).then();
+    }
   }
 }

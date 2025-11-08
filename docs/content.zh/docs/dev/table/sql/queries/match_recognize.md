@@ -79,12 +79,12 @@ Flink 的 `MATCH_RECOGNIZE` 子句实现是一个完整标准子集。仅支持�
 ```xml
 <dependency>
   <groupId>org.apache.flink</groupId>
-  <artifactId>flink-cep{{< scala_version >}}</artifactId>
+  <artifactId>flink-cep</artifactId>
   <version>{{< version >}}</version>
 </dependency>
 ```
 
-或者，也可以将依赖项添加到集群的 classpath（查看 [dependency section]({{< ref "docs/dev/datastream/project-configuration" >}}) 获取更多相关依赖信息）。
+或者，也可以将依赖项添加到集群的 classpath（查看 [dependency section]({{< ref "docs/dev/configuration/overview" >}}) 获取更多相关依赖信息）。
 
 如果你想在 [SQL Client]({{< ref "docs/dev/table/sqlClient" >}}) 中使用 `MATCH_RECOGNIZE` 子句，你无需执行任何操作，因为默认情况下包含所有依赖项。
 
@@ -219,7 +219,7 @@ Define & Measures
 
 ### Aggregations
 
-Aggregations 可以在 `DEFINE` 和 `MEASURES` 子句中使用。支持[内置函数]({{< ref "docs/dev/table/functions/systemFunctions" >}})和[用户自定义函数]({{< ref "docs/dev/table/functions/udfs" >}})。
+Aggregations 可以在 `DEFINE` 和 `MEASURES` 子句中使用。支持[内置函数]({{< ref "docs/dev/table/functions/systemfunctions" >}})和[用户自定义函数]({{< ref "docs/dev/table/functions/udfs" >}})。
 
 对相应匹配项的行子集可以使用 Aggregate functions。请查看[事件流导航](#pattern-navigation)部分以了解如何计算这些子集。
 
@@ -405,7 +405,7 @@ FROM Ticker
         AFTER MATCH SKIP PAST LAST ROW
         PATTERN (A B* C) WITHIN INTERVAL '1' HOUR
         DEFINE
-            B AS B.price > A.price - 10
+            B AS B.price > A.price - 10,
             C AS C.price < A.price - 10
     )
 ```
@@ -632,9 +632,7 @@ _Logical offsets_ 在映射到指定模式变量的事件启用导航。这可�
   <tbody>
   <tr>
     <td>
-```text
-LAST(variable.field, n)
-```
+      <code>LAST(variable.field, n)</code>
     </td>
     <td>
       <p>返回映射到变量最后 n 个元素的事件中的字段值。计数从映射的最后一个元素开始。</p>
@@ -642,9 +640,7 @@ LAST(variable.field, n)
   </tr>
   <tr>
     <td>
-```text
-FIRST(variable.field, n)
-```
+      <code>FIRST(variable.field, n)</code>
     </td>
     <td>
       <p>返回映射到变量的第 <i>n</i> 个元素的事件中的字段值。计数从映射的第一个元素开始。</p>
@@ -1006,7 +1002,6 @@ Flink 对 `MATCH_RECOGNIZE` 子句实现是一项长期持续的工作，目前�
   * `CLASSIFIER` 函数，尚不支持返回行映射到的模式变量。
 * `SUBSET` - 它允许创建模式变量的逻辑组，并在 `DEFINE` 和 `MEASURES` 子句中使用这些组。
 * Physical offsets - `PREV/NEXT`，它为所有可见事件建立索引，而不是仅将那些映射到模式变量的事件编入索引（如 [logical offsets](#logical-offsets) 的情况）。
-* 提取时间属性 - 目前无法为后续基于时间的操作提取时间属性。
 * `MATCH_RECOGNIZE` 仅 SQL 支持。Table API 中没有等效项。
 * Aggregations:
   * 不支持 distinct aggregations。

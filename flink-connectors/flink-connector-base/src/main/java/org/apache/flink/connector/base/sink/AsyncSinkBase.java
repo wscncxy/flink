@@ -18,14 +18,16 @@
 package org.apache.flink.connector.base.sink;
 
 import org.apache.flink.annotation.PublicEvolving;
-import org.apache.flink.api.connector.sink.Committer;
-import org.apache.flink.api.connector.sink.GlobalCommitter;
-import org.apache.flink.api.connector.sink.Sink;
-import org.apache.flink.core.io.SimpleVersionedSerializer;
+import org.apache.flink.api.connector.sink2.Sink;
+import org.apache.flink.api.connector.sink2.SupportsWriterState;
+import org.apache.flink.connector.base.sink.writer.BufferedRequestState;
+import org.apache.flink.connector.base.sink.writer.ElementConverter;
+import org.apache.flink.util.Preconditions;
 
 import java.io.Serializable;
-import java.util.Collection;
-import java.util.Optional;
+
+import static org.apache.flink.connector.base.sink.writer.config.AsyncSinkWriterConfiguration.DEFAULT_FAIL_ON_TIMEOUT;
+import static org.apache.flink.connector.base.sink.writer.config.AsyncSinkWriterConfiguration.DEFAULT_REQUEST_TIMEOUT_MS;
 
 /**
  * A generic sink for destinations that provide an async client to persist data.
@@ -47,25 +49,95 @@ import java.util.Optional;
  */
 @PublicEvolving
 public abstract class AsyncSinkBase<InputT, RequestEntryT extends Serializable>
-        implements Sink<InputT, Void, Collection<RequestEntryT>, Void> {
+        implements SupportsWriterState<InputT, BufferedRequestState<RequestEntryT>>, Sink<InputT> {
 
-    @Override
-    public Optional<Committer<Void>> createCommitter() {
-        return Optional.empty();
+    private final ElementConverter<InputT, RequestEntryT> elementConverter;
+    private final int maxBatchSize;
+    private final int maxInFlightRequests;
+    private final int maxBufferedRequests;
+    private final long maxBatchSizeInBytes;
+    private final long maxTimeInBufferMS;
+    private final long maxRecordSizeInBytes;
+    private final long requestTimeoutMS;
+    private final boolean failOnTimeout;
+
+    protected AsyncSinkBase(
+            ElementConverter<InputT, RequestEntryT> elementConverter,
+            int maxBatchSize,
+            int maxInFlightRequests,
+            int maxBufferedRequests,
+            long maxBatchSizeInBytes,
+            long maxTimeInBufferMS,
+            long maxRecordSizeInBytes) {
+        this(
+                elementConverter,
+                maxBatchSize,
+                maxInFlightRequests,
+                maxBufferedRequests,
+                maxBatchSizeInBytes,
+                maxTimeInBufferMS,
+                maxRecordSizeInBytes,
+                DEFAULT_REQUEST_TIMEOUT_MS,
+                DEFAULT_FAIL_ON_TIMEOUT);
     }
 
-    @Override
-    public Optional<GlobalCommitter<Void, Void>> createGlobalCommitter() {
-        return Optional.empty();
+    protected AsyncSinkBase(
+            ElementConverter<InputT, RequestEntryT> elementConverter,
+            int maxBatchSize,
+            int maxInFlightRequests,
+            int maxBufferedRequests,
+            long maxBatchSizeInBytes,
+            long maxTimeInBufferMS,
+            long maxRecordSizeInBytes,
+            long requestTimeoutMS,
+            boolean failOnTimeout) {
+        this.elementConverter =
+                Preconditions.checkNotNull(
+                        elementConverter,
+                        "ElementConverter must be not null when initializing the AsyncSinkBase.");
+        this.maxBatchSize = maxBatchSize;
+        this.maxInFlightRequests = maxInFlightRequests;
+        this.maxBufferedRequests = maxBufferedRequests;
+        this.maxBatchSizeInBytes = maxBatchSizeInBytes;
+        this.maxTimeInBufferMS = maxTimeInBufferMS;
+        this.maxRecordSizeInBytes = maxRecordSizeInBytes;
+        this.requestTimeoutMS = requestTimeoutMS;
+        this.failOnTimeout = failOnTimeout;
     }
 
-    @Override
-    public Optional<SimpleVersionedSerializer<Void>> getCommittableSerializer() {
-        return Optional.empty();
+    protected ElementConverter<InputT, RequestEntryT> getElementConverter() {
+        return elementConverter;
     }
 
-    @Override
-    public Optional<SimpleVersionedSerializer<Void>> getGlobalCommittableSerializer() {
-        return Optional.empty();
+    protected int getMaxBatchSize() {
+        return maxBatchSize;
+    }
+
+    protected int getMaxInFlightRequests() {
+        return maxInFlightRequests;
+    }
+
+    protected int getMaxBufferedRequests() {
+        return maxBufferedRequests;
+    }
+
+    protected long getMaxBatchSizeInBytes() {
+        return maxBatchSizeInBytes;
+    }
+
+    protected long getMaxTimeInBufferMS() {
+        return maxTimeInBufferMS;
+    }
+
+    protected long getMaxRecordSizeInBytes() {
+        return maxRecordSizeInBytes;
+    }
+
+    protected long getRequestTimeoutMS() {
+        return requestTimeoutMS;
+    }
+
+    protected boolean getFailOnTimeout() {
+        return failOnTimeout;
     }
 }

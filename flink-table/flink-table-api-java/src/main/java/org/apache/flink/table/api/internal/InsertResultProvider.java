@@ -23,6 +23,7 @@ import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.utils.print.RowDataToStringConverter;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 
@@ -61,6 +62,11 @@ class InsertResultProvider implements ResultProvider {
     }
 
     @Override
+    public RowDataToStringConverter getRowDataStringConverter() {
+        return StaticResultProvider.SIMPLE_ROW_DATA_TO_STRING_CONVERTER;
+    }
+
+    @Override
     public boolean isFirstRowReady() {
         return hasNext != null || hasNext();
     }
@@ -81,6 +87,12 @@ class InsertResultProvider implements ResultProvider {
             hasNext = true;
         }
         return hasNext;
+    }
+
+    @Override
+    public void reset() {
+        hasNext = null;
+        jobClient = null;
     }
 
     private class Iterator<T> implements CloseableIterator<T> {

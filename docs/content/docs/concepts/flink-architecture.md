@@ -43,7 +43,7 @@ The Flink runtime consists of two types of processes: a _JobManager_ and one or 
 The *Client* is not part of the runtime and program execution, but is used to
 prepare and send a dataflow to the JobManager.  After that, the client can
 disconnect (_detached mode_), or stay connected to receive progress reports
-(_attached mode_). The client runs either as part of the Java/Scala program
+(_attached mode_). The client runs either as part of the Java program
 that triggers the execution, or in the command line process `./bin/flink run
 ...`.
 
@@ -167,9 +167,27 @@ the outside world (see [Anatomy of a Flink Program]({{< ref "docs/dev/datastream
 
 The jobs of a Flink Application can either be submitted to a long-running
 [Flink Session Cluster]({{< ref "docs/concepts/glossary" >}}#flink-session-cluster), a dedicated [Flink Job
-Cluster]({{< ref "docs/concepts/glossary" >}}#flink-job-cluster), or a
+Cluster (deprecated)]({{< ref "docs/concepts/glossary" >}}#flink-job-cluster), or a
 [Flink Application Cluster]({{< ref "docs/concepts/glossary" >}}#flink-application-cluster). The difference between these options is mainly related to the cluster’s lifecycle and to resource
 isolation guarantees.
+
+### Flink Application Cluster
+
+* **Cluster Lifecycle**: a Flink Application Cluster is a dedicated Flink
+  cluster that only executes jobs from one Flink Application and where the
+  ``main()`` method runs on the cluster rather than the client. The job
+  submission is a one-step process: you don’t need to start a Flink cluster
+  first and then submit a job to the existing cluster session; instead, you
+  package your application logic and dependencies into a executable job JAR and
+  the cluster entrypoint (``ApplicationClusterEntryPoint``)
+  is responsible for calling the ``main()`` method to extract the JobGraph.
+  This allows you to deploy a Flink Application like any other application on
+  Kubernetes, for example. The lifetime of a Flink Application Cluster is
+  therefore bound to the lifetime of the Flink Application.
+
+* **Resource Isolation**: in a Flink Application Cluster, the ResourceManager
+  and Dispatcher are scoped to a single Flink Application, which provides a
+  better separation of concerns than the Flink Session Cluster.
 
 ### Flink Session Cluster
 
@@ -197,53 +215,6 @@ isolation guarantees.
 
 {{< hint info >}}
 Formerly, a Flink Session Cluster was also known as a Flink Cluster in `session mode`.
-{{< /hint >}}
-
-### Flink Job Cluster
-
-* **Cluster Lifecycle**: in a Flink Job Cluster, the available cluster manager
-  (like YARN) is used to spin up a cluster for each submitted job
-  and this cluster is available to that job only. Here, the client first
-  requests resources from the cluster manager to start the JobManager and
-  submits the job to the Dispatcher running inside this process. TaskManagers
-  are then lazily allocated based on the resource requirements of the job. Once
-  the job is finished, the Flink Job Cluster is torn down.
-
-* **Resource Isolation**: a fatal error in the JobManager only affects the one job running in that Flink Job Cluster.
-
-* **Other considerations**: because the ResourceManager has to apply and wait
-  for external resource management components to start the TaskManager
-  processes and allocate resources, Flink Job Clusters are more suited to large
-  jobs that are long-running, have high-stability requirements and are not
-  sensitive to longer startup times.
-
-{{< hint info >}}
-Formerly, a Flink Job Cluster was also known as a Flink Cluster in `job (or per-job) mode`.
-{{< /hint >}}
-{{< hint info >}}
-Kubernetes doesn't support Flink Job Cluster. See details in [Standalone Kubernetes]({{< ref "docs/deployment/resource-providers/standalone/kubernetes" >}}#per-job-cluster-mode) and [Native Kubernetes]({{< ref "docs/deployment/resource-providers/native_kubernetes" >}}#per-job-cluster-mode).
-{{< /hint >}}
-
-### Flink Application Cluster
-
-* **Cluster Lifecycle**: a Flink Application Cluster is a dedicated Flink
-  cluster that only executes jobs from one Flink Application and where the
-  ``main()`` method runs on the cluster rather than the client. The job
-  submission is a one-step process: you don’t need to start a Flink cluster
-  first and then submit a job to the existing cluster session; instead, you
-  package your application logic and dependencies into a executable job JAR and
-  the cluster entrypoint (``ApplicationClusterEntryPoint``)
-  is responsible for calling the ``main()`` method to extract the JobGraph.
-  This allows you to deploy a Flink Application like any other application on
-  Kubernetes, for example. The lifetime of a Flink Application Cluster is
-  therefore bound to the lifetime of the Flink Application.
-
-* **Resource Isolation**: in a Flink Application Cluster, the ResourceManager
-  and Dispatcher are scoped to a single Flink Application, which provides a
-  better separation of concerns than the Flink Session Cluster.
-
-{{< hint info >}}
-A Flink Job Cluster can be seen as a “run-on-client” alternative to Flink Application Clusters.
 {{< /hint >}}
 
 {{< top >}}

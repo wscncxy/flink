@@ -22,18 +22,59 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableException;
+import org.apache.flink.table.data.GenericArrayData;
+import org.apache.flink.table.data.GenericMapData;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.utils.print.PrintStyle;
+import org.apache.flink.table.utils.print.RowDataToStringConverter;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** Create result provider from a static set of data using external types. */
 @Internal
-class StaticResultProvider implements ResultProvider {
+public class StaticResultProvider implements ResultProvider {
+
+    /**
+     * This converter supports only String, long, int and boolean fields. Moreover, this converter
+     * works only with {@link GenericRowData}.
+     */
+    public static final RowDataToStringConverter SIMPLE_ROW_DATA_TO_STRING_CONVERTER =
+            rowData -> {
+                GenericRowData genericRowData = (GenericRowData) rowData;
+                String[] results = new String[rowData.getArity()];
+                for (int i = 0; i < results.length; i++) {
+                    Object value = genericRowData.getField(i);
+                    if (Boolean.TRUE.equals(value)) {
+                        results[i] = "TRUE";
+                    } else if (Boolean.FALSE.equals(value)) {
+                        results[i] = "FALSE";
+                    } else if (value instanceof GenericMapData) {
+                        // TODO: This is a temporary solution, the long-term solution is to use
+                        // RowDataToStringConverterImpl
+                        GenericMapData mapData = (GenericMapData) value;
+                        if (mapData.size() == 0) {
+                            results[i] = PrintStyle.NULL_VALUE;
+                        } else {
+                            Object[] keyArr =
+                                    ((GenericArrayData) mapData.keyArray()).toObjectArray();
+                            results[i] =
+                                    Arrays.stream(keyArr)
+                                            .map(key -> key + "=" + mapData.get(key))
+                                            .collect(Collectors.joining(", ", "{", "}"));
+                        }
+                    } else {
+                        results[i] = value == null ? PrintStyle.NULL_VALUE : "" + value;
+                    }
+                }
+                return results;
+            };
 
     private final List<Row> rows;
     private final Function<Row, RowData> externalToInternalConverter;
@@ -62,6 +103,11 @@ class StaticResultProvider implements ResultProvider {
     @Override
     public CloseableIterator<Row> toExternalIterator() {
         return CloseableIterator.adapterForIterator(this.rows.iterator());
+    }
+
+    @Override
+    public RowDataToStringConverter getRowDataStringConverter() {
+        return SIMPLE_ROW_DATA_TO_STRING_CONVERTER;
     }
 
     @Override

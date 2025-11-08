@@ -21,14 +21,16 @@ package org.apache.flink.test.misc;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.accumulators.LongCounter;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.java.DataSet;
-import org.apache.flink.api.java.ExecutionEnvironment;
-import org.apache.flink.api.java.io.DiscardingOutputFormat;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.api.common.serialization.SimpleStringEncoder;
+import org.apache.flink.connector.file.sink.FileSink;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.client.JobExecutionException;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.TestLogger;
@@ -61,84 +63,70 @@ public class MiscellaneousIssuesITCase extends TestLogger {
                             .build());
 
     @Test
-    public void testNullValues() {
+    public void testNullValues() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<String> data =
+                env.fromData("hallo")
+                        .map(
+                                new MapFunction<String, String>() {
+                                    @Override
+                                    public String map(String value) throws Exception {
+                                        return null;
+                                    }
+                                });
+        data.sinkTo(
+                FileSink.forRowFormat(new Path("/tmp/myTest"), new SimpleStringEncoder<String>())
+                        .build());
+
         try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
-            env.setParallelism(1);
-
-            DataSet<String> data =
-                    env.fromElements("hallo")
-                            .map(
-                                    new MapFunction<String, String>() {
-                                        @Override
-                                        public String map(String value) throws Exception {
-                                            return null;
-                                        }
-                                    });
-            data.writeAsText("/tmp/myTest", FileSystem.WriteMode.OVERWRITE);
-
-            try {
-                env.execute();
-                fail("this should fail due to null values.");
-            } catch (JobExecutionException e) {
-                assertTrue(findThrowable(e, NullPointerException.class).isPresent());
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
+            env.execute();
+            fail("this should fail due to null values.");
+        } catch (JobExecutionException e) {
+            assertTrue(findThrowable(e, NullPointerException.class).isPresent());
         }
     }
 
     @Test
-    public void testDisjointDataflows() {
-        try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
-            env.setParallelism(5);
+    public void testDisjointDataflows() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(5);
 
-            // generate two different flows
-            env.generateSequence(1, 10).output(new DiscardingOutputFormat<Long>());
-            env.generateSequence(1, 10).output(new DiscardingOutputFormat<Long>());
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
-        }
+        // generate two different flows
+        env.fromSequence(1, 10).sinkTo(new DiscardingSink<>());
+        env.fromSequence(1, 10).sinkTo(new DiscardingSink<>());
     }
 
     @Test
-    public void testAccumulatorsAfterNoOp() {
+    public void testAccumulatorsAfterNoOp() throws Exception {
 
         final String accName = "test_accumulator";
 
-        try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
-            env.setParallelism(6);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(6);
 
-            env.generateSequence(1, 1000000)
-                    .rebalance()
-                    .flatMap(
-                            new RichFlatMapFunction<Long, Long>() {
+        env.fromSequence(1, 1000000)
+                .rebalance()
+                .flatMap(
+                        new RichFlatMapFunction<Long, Long>() {
 
-                                private LongCounter counter;
+                            private LongCounter counter;
 
-                                @Override
-                                public void open(Configuration parameters) {
-                                    counter = getRuntimeContext().getLongCounter(accName);
-                                }
+                            @Override
+                            public void open(OpenContext openContext) {
+                                counter = getRuntimeContext().getLongCounter(accName);
+                            }
 
-                                @Override
-                                public void flatMap(Long value, Collector<Long> out) {
-                                    counter.add(1L);
-                                }
-                            })
-                    .output(new DiscardingOutputFormat<Long>());
+                            @Override
+                            public void flatMap(Long value, Collector<Long> out) {
+                                counter.add(1L);
+                            }
+                        })
+                .sinkTo(new DiscardingSink<>());
 
-            JobExecutionResult result = env.execute();
+        JobExecutionResult result = env.execute();
 
-            assertEquals(1000000L, result.getAllAccumulatorResults().get(accName));
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
-        }
+        assertEquals(1000000L, result.getAllAccumulatorResults().get(accName));
     }
 }

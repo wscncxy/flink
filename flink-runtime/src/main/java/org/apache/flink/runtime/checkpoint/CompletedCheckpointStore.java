@@ -18,11 +18,14 @@
 
 package org.apache.flink.runtime.checkpoint;
 
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobStatus;
+import org.apache.flink.runtime.state.SharedStateRegistry;
+import org.apache.flink.runtime.state.SharedStateRegistryFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 import java.util.List;
 
@@ -36,8 +39,22 @@ public interface CompletedCheckpointStore {
      *
      * <p>Only a bounded number of checkpoints is kept. When exceeding the maximum number of
      * retained checkpoints, the oldest one will be discarded.
+     *
+     * <p>After <a href="https://issues.apache.org/jira/browse/FLINK-24611">FLINK-24611</a>, {@link
+     * SharedStateRegistry#unregisterUnusedState} should be called here to subsume unused state.
+     * <font color="#FF0000"><strong>Note</strong></font>, the {@link CompletedCheckpoint} passed to
+     * {@link SharedStateRegistry#registerAllAfterRestored} or {@link
+     * SharedStateRegistryFactory#create} must be the same object as the input parameter, otherwise
+     * the state may be deleted by mistake.
+     *
+     * <p>After <a href="https://issues.apache.org/jira/browse/FLINK-25872">FLINK-25872</a>, {@link
+     * CheckpointsCleaner#cleanSubsumedCheckpoints} should be called explicitly here.
+     *
+     * @return the subsumed oldest completed checkpoint if possible, return null if no checkpoint
+     *     needs to be discarded on subsume.
      */
-    void addCheckpoint(
+    @Nullable
+    CompletedCheckpoint addCheckpointAndSubsumeOldestOne(
             CompletedCheckpoint checkpoint,
             CheckpointsCleaner checkpointsCleaner,
             Runnable postCleanup)
@@ -47,7 +64,7 @@ public interface CompletedCheckpointStore {
      * Returns the latest {@link CompletedCheckpoint} instance or <code>null</code> if none was
      * added.
      */
-    default CompletedCheckpoint getLatestCheckpoint() throws Exception {
+    default CompletedCheckpoint getLatestCheckpoint() {
         List<CompletedCheckpoint> allCheckpoints = getAllCheckpoints();
         if (allCheckpoints.isEmpty()) {
             return null;
@@ -75,7 +92,8 @@ public interface CompletedCheckpointStore {
      * Shuts down the store.
      *
      * <p>The job status is forwarded and used to decide whether state should actually be discarded
-     * or kept.
+     * or kept. {@link SharedStateRegistry#unregisterUnusedState} and {@link
+     * CheckpointsCleaner#cleanSubsumedCheckpoints} should be called here to subsume unused state.
      *
      * @param jobStatus Job state on shut down
      * @param checkpointsCleaner that will cleanup completed checkpoints if needed
@@ -87,7 +105,7 @@ public interface CompletedCheckpointStore {
      *
      * <p>Returns an empty list if no checkpoint has been added yet.
      */
-    List<CompletedCheckpoint> getAllCheckpoints() throws Exception;
+    List<CompletedCheckpoint> getAllCheckpoints();
 
     /** Returns the current number of retained checkpoints. */
     int getNumberOfRetainedCheckpoints();
@@ -105,15 +123,6 @@ public interface CompletedCheckpointStore {
      */
     boolean requiresExternalizedCheckpoints();
 
-    @VisibleForTesting
-    static CompletedCheckpointStore storeFor(
-            Runnable postCleanupAction, CompletedCheckpoint... checkpoints) throws Exception {
-        StandaloneCompletedCheckpointStore store =
-                new StandaloneCompletedCheckpointStore(checkpoints.length);
-        CheckpointsCleaner checkpointsCleaner = new CheckpointsCleaner();
-        for (final CompletedCheckpoint checkpoint : checkpoints) {
-            store.addCheckpoint(checkpoint, checkpointsCleaner, postCleanupAction);
-        }
-        return store;
-    }
+    /** Returns the {@link SharedStateRegistry} used to register the shared state. */
+    SharedStateRegistry getSharedStateRegistry();
 }

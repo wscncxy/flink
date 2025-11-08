@@ -22,12 +22,12 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter;
 import org.apache.flink.runtime.checkpoint.channel.InputChannelInfo;
 import org.apache.flink.runtime.event.TaskEvent;
+import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.io.network.partition.consumer.BufferOrEvent;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannel;
 import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
 import org.apache.flink.runtime.metrics.groups.TaskIOMetricGroup;
-import org.apache.flink.runtime.throughput.ThroughputCalculator;
 
 import java.io.IOException;
 import java.util.List;
@@ -46,20 +46,18 @@ public class InputGateWithMetrics extends IndexedInputGate {
 
     private final Counter numBytesIn;
 
-    private final ThroughputCalculator throughputCalculator;
-
-    public InputGateWithMetrics(
-            IndexedInputGate inputGate,
-            Counter numBytesIn,
-            ThroughputCalculator throughputCalculator) {
+    public InputGateWithMetrics(IndexedInputGate inputGate, Counter numBytesIn) {
         this.inputGate = checkNotNull(inputGate);
         this.numBytesIn = checkNotNull(numBytesIn);
-        this.throughputCalculator = throughputCalculator;
     }
 
     @Override
     public CompletableFuture<?> getAvailableFuture() {
         return inputGate.getAvailableFuture();
+    }
+
+    public void resumeGateConsumption() throws IOException {
+        inputGate.resumeGateConsumption();
     }
 
     @Override
@@ -93,13 +91,13 @@ public class InputGateWithMetrics extends IndexedInputGate {
     }
 
     @Override
-    public int getBuffersInUseCount() {
-        return inputGate.getBuffersInUseCount();
+    public ResultPartitionType getConsumedPartitionType() {
+        return inputGate.getConsumedPartitionType();
     }
 
     @Override
-    public void announceBufferSize(int bufferSize) {
-        inputGate.announceBufferSize(bufferSize);
+    public void triggerDebloating() {
+        inputGate.triggerDebloating();
     }
 
     @Override
@@ -108,7 +106,7 @@ public class InputGateWithMetrics extends IndexedInputGate {
     }
 
     @Override
-    public boolean hasReceivedEndOfData() {
+    public EndOfDataStatus hasReceivedEndOfData() {
         return inputGate.hasReceivedEndOfData();
     }
 
@@ -166,7 +164,6 @@ public class InputGateWithMetrics extends IndexedInputGate {
         int incomingDataSize = bufferOrEvent.getSize();
 
         numBytesIn.inc(incomingDataSize);
-        throughputCalculator.incomingDataSize(incomingDataSize);
 
         return bufferOrEvent;
     }

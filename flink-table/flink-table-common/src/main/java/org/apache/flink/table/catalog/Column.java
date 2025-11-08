@@ -135,6 +135,9 @@ public abstract class Column {
     /** Returns a copy of the column with a replaced {@link DataType}. */
     public abstract Column copy(DataType newType);
 
+    /** Returns a copy of the column with a replaced name. */
+    public abstract Column rename(String newName);
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -164,6 +167,7 @@ public abstract class Column {
     // --------------------------------------------------------------------------------------------
 
     /** Representation of a physical column. */
+    @PublicEvolving
     public static final class PhysicalColumn extends Column {
 
         private PhysicalColumn(String name, DataType dataType) {
@@ -201,9 +205,15 @@ public abstract class Column {
         public Column copy(DataType newDataType) {
             return new PhysicalColumn(name, newDataType, comment);
         }
+
+        @Override
+        public Column rename(String newName) {
+            return new PhysicalColumn(newName, dataType, comment);
+        }
     }
 
     /** Representation of a computed column. */
+    @PublicEvolving
     public static final class ComputedColumn extends Column {
 
         private final ResolvedExpression expression;
@@ -251,6 +261,11 @@ public abstract class Column {
         }
 
         @Override
+        public Column rename(String newName) {
+            return new ComputedColumn(newName, dataType, expression, comment);
+        }
+
+        @Override
         public boolean equals(Object o) {
             if (this == o) {
                 return true;
@@ -272,6 +287,7 @@ public abstract class Column {
     }
 
     /** Representation of a metadata column. */
+    @PublicEvolving
     public static final class MetadataColumn extends Column {
 
         private final @Nullable String metadataKey;
@@ -339,6 +355,11 @@ public abstract class Column {
         @Override
         public Column copy(DataType newDataType) {
             return new MetadataColumn(name, newDataType, metadataKey, isVirtual, comment);
+        }
+
+        @Override
+        public Column rename(String newName) {
+            return new MetadataColumn(newName, dataType, metadataKey, isVirtual, comment);
         }
 
         @Override

@@ -24,16 +24,20 @@ import org.apache.flink.table.connector.source.abilities.SupportsSourceWatermark
 import org.apache.flink.table.types.logical.RowType;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonTypeName;
+
+import java.util.Objects;
 
 /**
  * A sub-class of {@link SourceAbilitySpec} that can not only serialize/deserialize the boolean flag
  * whether a source watermark should be used to/from JSON, but can also apply it to {@link
  * SupportsSourceWatermark}.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 @JsonTypeName("SourceWatermark")
-public class SourceWatermarkSpec extends SourceAbilitySpecBase {
+public final class SourceWatermarkSpec extends SourceAbilitySpecBase {
     public static final String FIELD_NAME_SOURCE_WATERMARK_ENABLED = "sourceWatermarkEnabled";
 
     @JsonProperty(FIELD_NAME_SOURCE_WATERMARK_ENABLED)
@@ -62,7 +66,32 @@ public class SourceWatermarkSpec extends SourceAbilitySpecBase {
     }
 
     @Override
+    public boolean needAdjustFieldReferenceAfterProjection() {
+        return false;
+    }
+
+    @Override
     public String getDigests(SourceAbilityContext context) {
         return "watermark=[SOURCE_WATERMARK()]";
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        if (!super.equals(o)) {
+            return false;
+        }
+        SourceWatermarkSpec that = (SourceWatermarkSpec) o;
+        return sourceWatermarkEnabled == that.sourceWatermarkEnabled;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), sourceWatermarkEnabled);
     }
 }

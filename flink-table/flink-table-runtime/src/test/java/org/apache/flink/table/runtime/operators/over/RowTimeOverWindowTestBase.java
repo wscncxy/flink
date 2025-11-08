@@ -41,10 +41,16 @@ public class RowTimeOverWindowTestBase {
                 }
             };
 
-    protected LogicalType[] inputFieldTypes =
-            new LogicalType[] {
-                new VarCharType(VarCharType.MAX_LENGTH), new BigIntType(), new BigIntType()
+    protected static GeneratedAggsHandleFunction aggsSumLongHandleFunction =
+            new GeneratedAggsHandleFunction("Function", "", new Object[0]) {
+                @Override
+                public AggsHandleFunction newInstance(ClassLoader classLoader) {
+                    return new SumLongAggsHandleFunction(1);
+                }
             };
+
+    protected LogicalType[] inputFieldTypes =
+            new LogicalType[] {VarCharType.STRING_TYPE, new BigIntType(), new BigIntType()};
     protected LogicalType[] accTypes = new LogicalType[] {new BigIntType()};
 
     protected RowDataKeySelector keySelector =

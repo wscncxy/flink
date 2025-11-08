@@ -18,14 +18,12 @@
 
 package org.apache.flink.runtime.jobmaster.slotpool;
 
-import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
 import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutor;
 import org.apache.flink.runtime.executiongraph.utils.SimpleAckingTaskManagerGateway;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
-import org.apache.flink.runtime.jobmaster.SlotRequestId;
 import org.apache.flink.runtime.slots.ResourceRequirement;
 import org.apache.flink.runtime.taskexecutor.slot.SlotOffer;
 import org.apache.flink.runtime.taskmanager.LocalTaskManagerLocation;
@@ -33,6 +31,7 @@ import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.util.ResourceCounter;
 import org.apache.flink.util.FlinkException;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -43,13 +42,12 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static java.util.stream.Collectors.reducing;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /** Testing utility functions for the {@link SlotPool}. */
 public class SlotPoolUtils {
 
-    public static final Time TIMEOUT = Time.seconds(10L);
+    public static final Duration TIMEOUT = Duration.ofSeconds(10L);
 
     private SlotPoolUtils() {
         throw new UnsupportedOperationException("Cannot instantiate this class.");
@@ -67,7 +65,7 @@ public class SlotPoolUtils {
         return CompletableFuture.supplyAsync(
                         () ->
                                 slotPool.requestNewAllocatedBatchSlot(
-                                        new SlotRequestId(), resourceProfile),
+                                        PhysicalSlotRequestUtils.batchRequest(resourceProfile)),
                         mainThreadExecutor)
                 .thenCompose(Function.identity());
     }
@@ -129,7 +127,7 @@ public class SlotPoolUtils {
                                             taskManagerLocation, taskManagerGateway, slotOffers);
 
                             if (assertAllSlotsAreAccepted) {
-                                assertThat(acceptedOffers, is(slotOffers));
+                                assertThat(acceptedOffers).isEqualTo(slotOffers);
                             }
                         },
                         mainThreadExecutor)

@@ -30,17 +30,20 @@ import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedMultiInput;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.watermark.Watermark;
-import org.apache.flink.test.util.AbstractTestBase;
+import org.apache.flink.streaming.util.CheckpointStorageUtils;
+import org.apache.flink.test.util.AbstractTestBaseJUnit4;
 import org.apache.flink.testutils.junit.SharedObjects;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameter;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.flink.runtime.operators.lifecycle.graph.TestJobBuilders.COMPLEX_GRAPH_BUILDER;
 import static org.apache.flink.runtime.operators.lifecycle.graph.TestJobBuilders.SIMPLE_GRAPH_BUILDER;
@@ -61,8 +64,7 @@ import static org.apache.flink.runtime.operators.lifecycle.validation.TestOperat
  *         <li>{@link Watermark#MAX_WATERMARK MAX_WATERMARK} (if with drain)
  *         <li>{@link BoundedMultiInput#endInput endInput} (if with drain)
  *         <li>timer service quiesced
- *         <li>{@link StreamOperator#finish() finish} (if with drain; support is planned for
- *             no-drain)
+ *         <li>{@link StreamOperator#finish() finish} (if with drain)
  *         <li>{@link AbstractStreamOperator#snapshotState(StateSnapshotContext) snapshotState} (for
  *             the respective checkpoint)
  *         <li>{@link CheckpointListener#notifyCheckpointComplete notifyCheckpointComplete} (for the
@@ -95,10 +97,11 @@ import static org.apache.flink.runtime.operators.lifecycle.validation.TestOperat
  * </ul>
  */
 @RunWith(Parameterized.class)
-public class StopWithSavepointITCase extends AbstractTestBase {
+public class StopWithSavepointITCase extends AbstractTestBaseJUnit4 {
 
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
     @Rule public final SharedObjects sharedObjects = SharedObjects.create();
+    @Rule public Timeout timeoutRule = new Timeout(10, TimeUnit.MINUTES);
 
     @Parameter(0)
     public boolean withDrain;
@@ -113,11 +116,10 @@ public class StopWithSavepointITCase extends AbstractTestBase {
                         sharedObjects,
                         cfg -> {},
                         env ->
-                                env.getCheckpointConfig()
-                                        .setCheckpointStorage(
-                                                TEMPORARY_FOLDER.newFolder().toURI()));
+                                CheckpointStorageUtils.configureFileSystemCheckpointStorage(
+                                        env, TEMPORARY_FOLDER.newFolder().toURI()));
 
-        TestJobExecutor.execute(testJob, miniClusterResource)
+        TestJobExecutor.execute(testJob, MINI_CLUSTER_RESOURCE)
                 .waitForEvent(WatermarkReceivedEvent.class)
                 .stopWithSavepoint(temporaryFolder, withDrain);
 
@@ -131,17 +133,13 @@ public class StopWithSavepointITCase extends AbstractTestBase {
                     testJob,
                     sameCheckpointValidator,
                     new DrainingValidator(),
-                    /* Currently (1.14), finish is only called with drain; todo: enable after updating production code */
+                    /* Currently (1.14), finish is only called with drain; */
                     new FinishingValidator());
         } else {
             checkOperatorsLifecycle(testJob, sameCheckpointValidator);
         }
 
-        if (withDrain) {
-            // currently (1.14), sources do not stop before taking a savepoint and continue emission
-            // todo: enable after updating production code
-            checkDataFlow(testJob);
-        }
+        checkDataFlow(testJob, withDrain);
     }
 
     @Parameterized.Parameters(name = "withDrain: {0}, {1}")

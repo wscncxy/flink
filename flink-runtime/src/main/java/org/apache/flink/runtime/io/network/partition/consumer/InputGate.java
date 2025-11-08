@@ -98,8 +98,6 @@ public abstract class InputGate
 
     public abstract boolean isFinished();
 
-    public abstract boolean hasReceivedEndOfData();
-
     /**
      * Blocking call waiting for next {@link BufferOrEvent}.
      *
@@ -132,6 +130,8 @@ public abstract class InputGate
     public CompletableFuture<?> getAvailableFuture() {
         return availabilityHelper.getAvailableFuture();
     }
+
+    public abstract void resumeGateConsumption() throws IOException;
 
     public abstract void resumeConsumption(InputChannelInfo channelInfo) throws IOException;
 

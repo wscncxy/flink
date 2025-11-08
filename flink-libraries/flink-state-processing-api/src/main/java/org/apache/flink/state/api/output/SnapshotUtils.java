@@ -20,10 +20,12 @@ package org.apache.flink.state.api.output;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.execution.CheckpointingMode;
+import org.apache.flink.core.execution.SavepointFormatType;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
-import org.apache.flink.runtime.checkpoint.CheckpointType;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
+import org.apache.flink.runtime.checkpoint.SavepointType;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.filesystem.AbstractFsCheckpointStorageAccess;
 import org.apache.flink.runtime.state.filesystem.FsCheckpointStorageLocation;
@@ -40,40 +42,63 @@ import static org.apache.flink.configuration.CheckpointingOptions.FS_WRITE_BUFFE
 /** Takes a final snapshot of the state of an operator subtask. */
 @Internal
 public final class SnapshotUtils {
-    static final long CHECKPOINT_ID = 0L;
-
     private SnapshotUtils() {}
 
     public static <OUT, OP extends StreamOperator<OUT>> TaggedOperatorSubtaskState snapshot(
+            long checkpointId,
             OP operator,
             int index,
             long timestamp,
-            boolean isExactlyOnceMode,
+            CheckpointingMode checkpointingMode,
+            boolean isUnalignedCheckpoint,
+            Configuration configuration,
+            Path savepointPath,
+            SavepointFormatType savepointFormatType)
+            throws Exception {
+
+        CheckpointOptions options =
+                CheckpointOptions.forConfig(
+                        SavepointType.savepoint(savepointFormatType),
+                        AbstractFsCheckpointStorageAccess.encodePathAsReference(savepointPath),
+                        checkpointingMode == CheckpointingMode.EXACTLY_ONCE,
+                        isUnalignedCheckpoint,
+                        CheckpointOptions.NO_ALIGNED_CHECKPOINT_TIME_OUT);
+
+        operator.prepareSnapshotPreBarrier(checkpointId);
+
+        CheckpointStreamFactory storage = createStreamFactory(configuration, options);
+
+        OperatorSnapshotFutures snapshotInProgress =
+                operator.snapshotState(checkpointId, timestamp, options, storage);
+
+        OperatorSubtaskState state =
+                OperatorSnapshotFinalizer.create(snapshotInProgress).getJobManagerOwnedState();
+
+        operator.notifyCheckpointComplete(checkpointId);
+        return new TaggedOperatorSubtaskState(index, state);
+    }
+
+    public static <OUT, OP extends StreamOperator<OUT>> TaggedOperatorSubtaskState snapshot(
+            long checkpointId,
+            OP operator,
+            int index,
+            long timestamp,
+            CheckpointingMode checkpointingMode,
             boolean isUnalignedCheckpoint,
             Configuration configuration,
             Path savepointPath)
             throws Exception {
 
-        CheckpointOptions options =
-                CheckpointOptions.forConfig(
-                        CheckpointType.SAVEPOINT,
-                        AbstractFsCheckpointStorageAccess.encodePathAsReference(savepointPath),
-                        isExactlyOnceMode,
-                        isUnalignedCheckpoint,
-                        CheckpointOptions.NO_ALIGNED_CHECKPOINT_TIME_OUT);
-
-        operator.prepareSnapshotPreBarrier(CHECKPOINT_ID);
-
-        CheckpointStreamFactory storage = createStreamFactory(configuration, options);
-
-        OperatorSnapshotFutures snapshotInProgress =
-                operator.snapshotState(CHECKPOINT_ID, timestamp, options, storage);
-
-        OperatorSubtaskState state =
-                new OperatorSnapshotFinalizer(snapshotInProgress).getJobManagerOwnedState();
-
-        operator.notifyCheckpointComplete(CHECKPOINT_ID);
-        return new TaggedOperatorSubtaskState(index, state);
+        return snapshot(
+                checkpointId,
+                operator,
+                index,
+                timestamp,
+                checkpointingMode,
+                isUnalignedCheckpoint,
+                configuration,
+                savepointPath,
+                SavepointFormatType.DEFAULT);
     }
 
     private static CheckpointStreamFactory createStreamFactory(

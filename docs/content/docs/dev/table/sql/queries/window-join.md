@@ -23,13 +23,17 @@ under the License.
 -->
 
 # Window Join
-{{< label Streaming >}}
+{{< label Batch >}} {{< label Streaming >}}
 
-A window join adds the dimension of time into the join criteria themselves. In doing so, the window join joins the elements of two streams that share a common key and lie in the same window. The semantic of window join is same to the [DataStream window join]({{< ref "docs/dev/datastream/operators/joining" >}}#window-join)
+A window join adds the dimension of time into the join criteria themselves. In doing so, the window join joins the elements of two streams that share a common key and are in the same window. The semantic of window join is same to the [DataStream window join]({{< ref "docs/dev/datastream/operators/joining" >}}#window-join)
 
 For streaming queries, unlike other joins on continuous tables, window join does not emit intermediate results but only emits final results at the end of the window. Moreover, window join purge all intermediate state when no longer needed.
 
 Usually, Window Join is used with [Windowing TVF]({{< ref "docs/dev/table/sql/queries/window-tvf" >}}). Besides, Window Join could follow after other operations based on [Windowing TVF]({{< ref "docs/dev/table/sql/queries/window-tvf" >}}), such as [Window Aggregation]({{< ref "docs/dev/table/sql/queries/window-agg" >}}), [Window TopN]({{< ref "docs/dev/table/sql/queries/window-topn">}}) and [Window Join]({{< ref "docs/dev/table/sql/queries/window-join">}}).
+
+{{< hint info >}}
+Note: `SESSION` Window Join is not supported in batch mode now.
+{{< /hint >}}
 
 Currently, Window Join requires the join on condition contains window starts equality of input tables and window ends equality of input tables.
 
@@ -86,7 +90,9 @@ Flink SQL> SELECT * FROM RightTable;
 | 2020-04-15 12:05 |   4 | R4 |
 +------------------+-----+----+
 
-Flink SQL> SELECT L.num as L_Num, L.id as L_Id, R.num as R_Num, R.id as R_Id, L.window_start, L.window_end
+Flink SQL> SELECT L.num as L_Num, L.id as L_Id, R.num as R_Num, R.id as R_Id,
+           COALESCE(L.window_start, R.window_start) as window_start,
+           COALESCE(L.window_end, R.window_end) as window_end
            FROM (
                SELECT * FROM TABLE(TUMBLE(TABLE LeftTable, DESCRIPTOR(row_time), INTERVAL '5' MINUTES))
            ) L

@@ -22,6 +22,7 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.utils.print.RowDataToStringConverter;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 
@@ -49,6 +50,8 @@ public interface ResultProvider {
      */
     CloseableIterator<Row> toExternalIterator();
 
+    RowDataToStringConverter getRowDataStringConverter();
+
     /**
      * Return true if the first row is ready.
      *
@@ -56,4 +59,7 @@ public interface ResultProvider {
      * {@link CloseableIterator#next()} method returns a row.
      */
     boolean isFirstRowReady();
+
+    /** Reset this ResultProvider to the origin state when we create it. */
+    default void reset() {}
 }

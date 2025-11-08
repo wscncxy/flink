@@ -18,10 +18,13 @@
 
 package org.apache.flink.runtime.entrypoint.component;
 
+import org.apache.flink.core.testutils.FlinkAssertions;
 import org.apache.flink.runtime.clusterframework.ApplicationStatus;
+import org.apache.flink.runtime.dispatcher.DispatcherOperationCaches;
 import org.apache.flink.runtime.dispatcher.runner.TestingDispatcherRunner;
 import org.apache.flink.runtime.leaderretrieval.SettableLeaderRetrievalService;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerService;
+import org.apache.flink.runtime.rest.ClosedRestService;
 import org.apache.flink.runtime.util.TestingFatalErrorHandler;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.TestLogger;
@@ -34,9 +37,7 @@ import javax.annotation.Nullable;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
-import static org.apache.flink.core.testutils.FlinkMatchers.containsCause;
-import static org.apache.flink.core.testutils.FlinkMatchers.willNotComplete;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /** Tests for the {@link DispatcherResourceManagerComponent}. */
 public class DispatcherResourceManagerComponentTest extends TestLogger {
@@ -57,7 +58,7 @@ public class DispatcherResourceManagerComponentTest extends TestLogger {
         terminationFuture.completeExceptionally(expectedException);
 
         final Throwable error = fatalErrorHandler.getException();
-        assertThat(error, containsCause(expectedException));
+        assertThat(error).hasCause(expectedException);
     }
 
     private DispatcherResourceManagerComponent createDispatcherResourceManagerComponent(
@@ -68,8 +69,9 @@ public class DispatcherResourceManagerComponentTest extends TestLogger {
                 resourceManagerService,
                 new SettableLeaderRetrievalService(),
                 new SettableLeaderRetrievalService(),
-                FutureUtils::completedVoidFuture,
-                fatalErrorHandler);
+                ClosedRestService.INSTANCE,
+                fatalErrorHandler,
+                new DispatcherOperationCaches());
     }
 
     @Test
@@ -91,7 +93,7 @@ public class DispatcherResourceManagerComponentTest extends TestLogger {
         terminationFuture.completeExceptionally(expectedException);
 
         final CompletableFuture<Throwable> errorFuture = fatalErrorHandler.getErrorFuture();
-        assertThat(errorFuture, willNotComplete(Duration.ofMillis(10L)));
+        FlinkAssertions.assertThatFuture(errorFuture).willNotCompleteWithin(Duration.ofMillis(10L));
     }
 
     /**

@@ -18,11 +18,14 @@
 
 package org.apache.flink.sql.parser.ddl;
 
+import org.apache.flink.sql.parser.SqlUnparseUtils;
+
 import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlCreate;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.SqlWriter;
@@ -51,6 +54,9 @@ public class SqlCreateFunction extends SqlCreate {
 
     private final boolean isSystemFunction;
 
+    private final SqlNodeList resourceInfos;
+    private final SqlNodeList propertyList;
+
     public SqlCreateFunction(
             SqlParserPos pos,
             SqlIdentifier functionIdentifier,
@@ -58,13 +64,17 @@ public class SqlCreateFunction extends SqlCreate {
             String functionLanguage,
             boolean ifNotExists,
             boolean isTemporary,
-            boolean isSystemFunction) {
+            boolean isSystemFunction,
+            SqlNodeList resourceInfos,
+            SqlNodeList propertyList) {
         super(OPERATOR, pos, false, ifNotExists);
         this.functionIdentifier = requireNonNull(functionIdentifier);
         this.functionClassName = requireNonNull(functionClassName);
         this.isSystemFunction = isSystemFunction;
         this.isTemporary = isTemporary;
         this.functionLanguage = functionLanguage;
+        this.resourceInfos = resourceInfos;
+        this.propertyList = requireNonNull(propertyList);
     }
 
     @Override
@@ -75,7 +85,7 @@ public class SqlCreateFunction extends SqlCreate {
     @Nonnull
     @Override
     public List<SqlNode> getOperandList() {
-        return ImmutableNullableList.of(functionIdentifier, functionClassName);
+        return ImmutableNullableList.of(functionIdentifier, functionClassName, resourceInfos);
     }
 
     @Override
@@ -97,6 +107,25 @@ public class SqlCreateFunction extends SqlCreate {
         if (functionLanguage != null) {
             writer.keyword("LANGUAGE");
             writer.keyword(functionLanguage);
+        }
+        if (!resourceInfos.isEmpty()) {
+            writer.keyword("USING");
+            SqlWriter.Frame withFrame = writer.startList("", "");
+            for (SqlNode resourcePath : resourceInfos) {
+                writer.sep(",");
+                resourcePath.unparse(writer, leftPrec, rightPrec);
+            }
+            writer.endList(withFrame);
+        }
+        if (!this.propertyList.isEmpty()) {
+            writer.keyword("WITH");
+            SqlWriter.Frame withFrame = writer.startList("(", ")");
+            for (SqlNode property : propertyList) {
+                SqlUnparseUtils.printIndent(writer);
+                property.unparse(writer, leftPrec, rightPrec);
+            }
+            writer.newlineAndIndent();
+            writer.endList(withFrame);
         }
     }
 
@@ -122,5 +151,13 @@ public class SqlCreateFunction extends SqlCreate {
 
     public String[] getFunctionIdentifier() {
         return functionIdentifier.names.toArray(new String[0]);
+    }
+
+    public List<SqlNode> getResourceInfos() {
+        return resourceInfos.getList();
+    }
+
+    public SqlNodeList getPropertyList() {
+        return propertyList;
     }
 }

@@ -67,7 +67,9 @@ public class EnvironmentInformation {
         return getVersionsInstance().scalaVersion;
     }
 
-    /** @return The Instant this version of the software was built. */
+    /**
+     * @return The Instant this version of the software was built.
+     */
     public static Instant getBuildTime() {
         return getVersionsInstance().gitBuildTime;
     }
@@ -80,17 +82,23 @@ public class EnvironmentInformation {
         return getVersionsInstance().gitBuildTimeStr;
     }
 
-    /** @return The last known commit id of this version of the software. */
+    /**
+     * @return The last known commit id of this version of the software.
+     */
     public static String getGitCommitId() {
         return getVersionsInstance().gitCommitId;
     }
 
-    /** @return The last known abbreviated commit id of this version of the software. */
+    /**
+     * @return The last known abbreviated commit id of this version of the software.
+     */
     public static String getGitCommitIdAbbrev() {
         return getVersionsInstance().gitCommitIdAbbrev;
     }
 
-    /** @return The Instant of the last commit of this code. */
+    /**
+     * @return The Instant of the last commit of this code.
+     */
     public static Instant getGitCommitTime() {
         return getVersionsInstance().gitCommitTime;
     }
@@ -403,6 +411,8 @@ public class EnvironmentInformation {
 
             String inheritedLogs = System.getenv("FLINK_INHERITED_LOGS");
 
+            String arch = System.getProperty("os.arch");
+
             long maxHeapMegabytes = getMaxJvmHeapMemory() >>> 20;
 
             if (inheritedLogs != null) {
@@ -431,6 +441,7 @@ public class EnvironmentInformation {
             log.info(" OS current user: " + System.getProperty("user.name"));
             log.info(" Current Hadoop/Kerberos user: " + getHadoopUser());
             log.info(" JVM: " + jvmVersion);
+            log.info(" Arch: " + arch);
             log.info(" Maximum heap size: " + maxHeapMegabytes + " MiBytes");
             log.info(" JAVA_HOME: " + (javaHome == null ? "(not set)" : javaHome));
 

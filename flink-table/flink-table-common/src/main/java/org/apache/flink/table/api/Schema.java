@@ -24,6 +24,7 @@ import org.apache.flink.table.catalog.Column.ComputedColumn;
 import org.apache.flink.table.catalog.Column.MetadataColumn;
 import org.apache.flink.table.catalog.Column.PhysicalColumn;
 import org.apache.flink.table.catalog.Constraint;
+import org.apache.flink.table.catalog.Index;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.SchemaResolver;
 import org.apache.flink.table.catalog.UniqueConstraint;
@@ -50,14 +51,12 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import static org.apache.flink.table.types.logical.utils.LogicalTypeChecks.hasRoot;
-
 /**
  * Schema of a table or view.
  *
  * <p>A schema represents the schema part of a {@code CREATE TABLE (schema) WITH (options)} DDL
- * statement in SQL. It defines columns of different kind, constraints, time attributes, and
- * watermark strategies. It is possible to reference objects (such as functions or types) across
+ * statement in SQL. It defines columns of different kinds, constraints, indexes, time attributes,
+ * and watermark strategies. It is possible to reference objects (such as functions or types) across
  * different catalogs.
  *
  * <p>This class is used in the API and catalogs to define an unresolved schema that will be
@@ -79,13 +78,26 @@ public final class Schema {
 
     private final @Nullable UnresolvedPrimaryKey primaryKey;
 
-    private Schema(
+    private final List<UnresolvedIndex> indexes;
+
+    /** Please use {@link #Schema(List, List, UnresolvedPrimaryKey, List)} instead. */
+    @Deprecated
+    public Schema(
             List<UnresolvedColumn> columns,
             List<UnresolvedWatermarkSpec> watermarkSpecs,
             @Nullable UnresolvedPrimaryKey primaryKey) {
+        this(columns, watermarkSpecs, primaryKey, Collections.emptyList());
+    }
+
+    public Schema(
+            List<UnresolvedColumn> columns,
+            List<UnresolvedWatermarkSpec> watermarkSpecs,
+            @Nullable UnresolvedPrimaryKey primaryKey,
+            List<UnresolvedIndex> indexes) {
         this.columns = Collections.unmodifiableList(columns);
         this.watermarkSpecs = Collections.unmodifiableList(watermarkSpecs);
         this.primaryKey = primaryKey;
+        this.indexes = Collections.unmodifiableList(indexes);
     }
 
     /** Builder for configuring and creating instances of {@link Schema}. */
@@ -118,6 +130,10 @@ public final class Schema {
         return Optional.ofNullable(primaryKey);
     }
 
+    public List<UnresolvedIndex> getIndexes() {
+        return indexes;
+    }
+
     /** Resolves the given {@link Schema} to a validated {@link ResolvedSchema}. */
     public ResolvedSchema resolve(SchemaResolver resolver) {
         return resolver.resolve(this);
@@ -130,6 +146,9 @@ public final class Schema {
         components.addAll(watermarkSpecs);
         if (primaryKey != null) {
             components.add(primaryKey);
+        }
+        if (!indexes.isEmpty()) {
+            components.addAll(indexes);
         }
         return components.stream()
                 .map(Objects::toString)
@@ -148,17 +167,19 @@ public final class Schema {
         Schema schema = (Schema) o;
         return columns.equals(schema.columns)
                 && watermarkSpecs.equals(schema.watermarkSpecs)
-                && Objects.equals(primaryKey, schema.primaryKey);
+                && Objects.equals(primaryKey, schema.primaryKey)
+                && indexes.equals(schema.indexes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(columns, watermarkSpecs, primaryKey);
+        return Objects.hash(columns, watermarkSpecs, primaryKey, indexes);
     }
 
     // --------------------------------------------------------------------------------------------
 
     /** A builder for constructing an immutable but still unresolved {@link Schema}. */
+    @PublicEvolving
     public static final class Builder {
 
         private final List<UnresolvedColumn> columns;
@@ -167,9 +188,12 @@ public final class Schema {
 
         private @Nullable UnresolvedPrimaryKey primaryKey;
 
+        private final List<UnresolvedIndex> indexes;
+
         private Builder() {
             columns = new ArrayList<>();
             watermarkSpecs = new ArrayList<>();
+            indexes = new ArrayList<>();
         }
 
         /** Adopts all members from the given unresolved schema. */
@@ -181,6 +205,7 @@ public final class Schema {
                         unresolvedSchema.primaryKey.getConstraintName(),
                         unresolvedSchema.primaryKey.getColumnNames());
             }
+            indexes.addAll(unresolvedSchema.indexes);
             return this;
         }
 
@@ -189,6 +214,7 @@ public final class Schema {
             addResolvedColumns(resolvedSchema.getColumns());
             addResolvedWatermarkSpec(resolvedSchema.getWatermarkSpecs());
             resolvedSchema.getPrimaryKey().ifPresent(this::addResolvedConstraint);
+            addResolvedIndexes(resolvedSchema.getIndexes());
             return this;
         }
 
@@ -196,7 +222,7 @@ public final class Schema {
         public Builder fromRowDataType(DataType dataType) {
             Preconditions.checkNotNull(dataType, "Data type must not be null.");
             Preconditions.checkArgument(
-                    hasRoot(dataType.getLogicalType(), LogicalTypeRoot.ROW),
+                    dataType.getLogicalType().is(LogicalTypeRoot.ROW),
                     "Data type of ROW expected.");
             final List<DataType> fieldDataTypes = dataType.getChildren();
             final List<String> fieldNames = ((RowType) dataType.getLogicalType()).getFieldNames();
@@ -527,7 +553,7 @@ public final class Schema {
         }
 
         /**
-         * Declares a primary key constraint for a set of given columns. Primary key uniquely
+         * Declares a primary key constraint for a list of given columns. Primary key uniquely
          * identify a row in a table. Neither of columns in a primary can be nullable. The primary
          * key is informational only. It will not be enforced. It can be used for optimizations. It
          * is the data owner's responsibility to ensure uniqueness of the data.
@@ -542,7 +568,7 @@ public final class Schema {
         }
 
         /**
-         * Declares a primary key constraint for a set of given columns. Primary key uniquely
+         * Declares a primary key constraint for a list of given columns. Primary key uniquely
          * identify a row in a table. Neither of columns in a primary can be nullable. The primary
          * key is informational only. It will not be enforced. It can be used for optimizations. It
          * is the data owner's responsibility to ensure uniqueness of the data.
@@ -559,7 +585,7 @@ public final class Schema {
         }
 
         /**
-         * Declares a primary key constraint for a set of given columns. Primary key uniquely
+         * Declares a primary key constraint for a list of given columns. Primary key uniquely
          * identify a row in a table. Neither of columns in a primary can be nullable. The primary
          * key is informational only. It will not be enforced. It can be used for optimizations. It
          * is the data owner's responsibility to ensure uniqueness of the data.
@@ -573,7 +599,7 @@ public final class Schema {
         }
 
         /**
-         * Declares a primary key constraint for a set of given columns. Primary key uniquely
+         * Declares a primary key constraint for a list of given columns. Primary key uniquely
          * identify a row in a table. Neither of columns in a primary can be nullable. The primary
          * key is informational only. It will not be enforced. It can be used for optimizations. It
          * is the data owner's responsibility to ensure uniqueness of the data.
@@ -596,32 +622,83 @@ public final class Schema {
             return this;
         }
 
+        /**
+         * Declares a named index for a list of given column names. Indexes are designed to enable
+         * very efficient search. The indexes are informational only and can be used for
+         * optimizations. It is the data owner's responsibility to guarantee the index queries allow
+         * the complete row to be retrieved efficiently.
+         *
+         * <p>The index will be assigned a generated name in the format {@code INDEX_col1_col2}.
+         *
+         * @param columnNames indexes that form a table index
+         */
+        public Builder index(String... columnNames) {
+            Preconditions.checkNotNull(indexes, "Index column names must not be null.");
+            return index(Arrays.asList(columnNames));
+        }
+
+        /**
+         * Declares a named index for a list of given column names. Indexes are designed to enable
+         * very efficient search. The indexes are informational only and can be used for
+         * optimizations. It is the data owner's responsibility to guarantee the index queries allow
+         * the complete row to be retrieved efficiently.
+         *
+         * <p>The index will be assigned a generated name in the format {@code INDEX_col1_col2}.
+         *
+         * @param columnNames indexes that form a table index
+         */
+        public Builder index(List<String> columnNames) {
+            Preconditions.checkNotNull(indexes, "Index column names must not be null.");
+            final String generatedIndexName =
+                    columnNames.stream().collect(Collectors.joining("_", "INDEX_", ""));
+            return indexNamed(generatedIndexName, columnNames);
+        }
+
+        /**
+         * Declares a named index for a list of given column names. Indexes are designed to enable
+         * very efficient search. The indexes are informational only and can be used for
+         * optimizations. It is the data owner's responsibility to guarantee the index queries allow
+         * the complete row to be retrieved efficiently.
+         *
+         * @param indexName the name of the index
+         * @param columnNames columns that form a table index
+         */
+        public Builder indexNamed(String indexName, List<String> columnNames) {
+            Preconditions.checkNotNull(indexName, "Index name must not be null.");
+            Preconditions.checkNotNull(columnNames, "Index column names must not be null.");
+            Preconditions.checkArgument(
+                    !columnNames.isEmpty(), "Index must be defined for at least a single column.");
+            this.indexes.add(new UnresolvedIndex(indexName, columnNames));
+            return this;
+        }
+
         /** Returns an instance of an unresolved {@link Schema}. */
         public Schema build() {
-            return new Schema(columns, watermarkSpecs, primaryKey);
+            return new Schema(columns, watermarkSpecs, primaryKey, indexes);
         }
 
         // ----------------------------------------------------------------------------------------
 
         private void addResolvedColumns(List<Column> columns) {
-            columns.forEach(
-                    c -> {
-                        if (c instanceof PhysicalColumn) {
-                            final PhysicalColumn physicalColumn = (PhysicalColumn) c;
-                            column(physicalColumn.getName(), physicalColumn.getDataType());
-                        } else if (c instanceof ComputedColumn) {
-                            final ComputedColumn computedColumn = (ComputedColumn) c;
-                            columnByExpression(
-                                    computedColumn.getName(), computedColumn.getExpression());
-                        } else if (c instanceof MetadataColumn) {
-                            final MetadataColumn metadataColumn = (MetadataColumn) c;
-                            columnByMetadata(
-                                    metadataColumn.getName(),
-                                    metadataColumn.getDataType(),
-                                    metadataColumn.getMetadataKey().orElse(null),
-                                    metadataColumn.isVirtual());
-                        }
-                    });
+            for (Column c : columns) {
+                if (c instanceof PhysicalColumn) {
+                    PhysicalColumn physicalColumn = (PhysicalColumn) c;
+                    column(physicalColumn.getName(), physicalColumn.getDataType());
+                    c.getComment().ifPresent(this::withComment);
+                } else if (c instanceof ComputedColumn) {
+                    ComputedColumn computedColumn = (ComputedColumn) c;
+                    columnByExpression(computedColumn.getName(), computedColumn.getExpression());
+                    c.getComment().ifPresent(this::withComment);
+                } else if (c instanceof MetadataColumn) {
+                    MetadataColumn metadataColumn = (MetadataColumn) c;
+                    columnByMetadata(
+                            metadataColumn.getName(),
+                            metadataColumn.getDataType(),
+                            metadataColumn.getMetadataKey().orElse(null),
+                            metadataColumn.isVirtual());
+                    c.getComment().ifPresent(this::withComment);
+                }
+            }
         }
 
         private void addResolvedWatermarkSpec(List<WatermarkSpec> specs) {
@@ -639,6 +716,11 @@ public final class Schema {
                 throw new IllegalArgumentException("Unsupported constraint type.");
             }
         }
+
+        private void addResolvedIndexes(List<Index> resolvedIndexes) {
+            resolvedIndexes.forEach(
+                    index -> indexes.add(new UnresolvedIndex(index.getName(), index.getColumns())));
+        }
     }
 
     // --------------------------------------------------------------------------------------------
@@ -646,6 +728,7 @@ public final class Schema {
     // --------------------------------------------------------------------------------------------
 
     /** Super class for all kinds of columns in an unresolved schema. */
+    @PublicEvolving
     public abstract static class UnresolvedColumn {
         final String columnName;
         final @Nullable String comment;
@@ -692,19 +775,22 @@ public final class Schema {
      * Declaration of a physical column that will be resolved to {@link PhysicalColumn} during
      * schema resolution.
      */
+    @PublicEvolving
     public static final class UnresolvedPhysicalColumn extends UnresolvedColumn {
 
         private final AbstractDataType<?> dataType;
 
-        UnresolvedPhysicalColumn(String columnName, AbstractDataType<?> dataType) {
+        public UnresolvedPhysicalColumn(String columnName, AbstractDataType<?> dataType) {
             this(columnName, dataType, null);
         }
 
-        UnresolvedPhysicalColumn(String columnName, AbstractDataType<?> dataType, String comment) {
+        public UnresolvedPhysicalColumn(
+                String columnName, AbstractDataType<?> dataType, @Nullable String comment) {
             super(columnName, comment);
             this.dataType = dataType;
         }
 
+        @Override
         UnresolvedPhysicalColumn withComment(String comment) {
             return new UnresolvedPhysicalColumn(columnName, dataType, comment);
         }
@@ -752,19 +838,21 @@ public final class Schema {
      * Declaration of a computed column that will be resolved to {@link ComputedColumn} during
      * schema resolution.
      */
+    @PublicEvolving
     public static final class UnresolvedComputedColumn extends UnresolvedColumn {
 
         private final Expression expression;
 
-        UnresolvedComputedColumn(String columnName, Expression expression) {
+        public UnresolvedComputedColumn(String columnName, Expression expression) {
             this(columnName, expression, null);
         }
 
-        UnresolvedComputedColumn(String columnName, Expression expression, String comment) {
+        public UnresolvedComputedColumn(String columnName, Expression expression, String comment) {
             super(columnName, comment);
             this.expression = expression;
         }
 
+        @Override
         public UnresolvedComputedColumn withComment(String comment) {
             return new UnresolvedComputedColumn(columnName, expression, comment);
         }
@@ -812,13 +900,14 @@ public final class Schema {
      * Declaration of a metadata column that will be resolved to {@link MetadataColumn} during
      * schema resolution.
      */
+    @PublicEvolving
     public static final class UnresolvedMetadataColumn extends UnresolvedColumn {
 
         private final AbstractDataType<?> dataType;
         private final @Nullable String metadataKey;
         private final boolean isVirtual;
 
-        UnresolvedMetadataColumn(
+        public UnresolvedMetadataColumn(
                 String columnName,
                 AbstractDataType<?> dataType,
                 @Nullable String metadataKey,
@@ -826,18 +915,19 @@ public final class Schema {
             this(columnName, dataType, metadataKey, isVirtual, null);
         }
 
-        UnresolvedMetadataColumn(
+        public UnresolvedMetadataColumn(
                 String columnName,
                 AbstractDataType<?> dataType,
                 @Nullable String metadataKey,
                 boolean isVirtual,
-                String comment) {
+                @Nullable String comment) {
             super(columnName, comment);
             this.dataType = dataType;
             this.metadataKey = metadataKey;
             this.isVirtual = isVirtual;
         }
 
+        @Override
         UnresolvedMetadataColumn withComment(@Nullable String comment) {
             return new UnresolvedMetadataColumn(
                     columnName, dataType, metadataKey, isVirtual, comment);
@@ -905,12 +995,13 @@ public final class Schema {
      * Declaration of a watermark strategy that will be resolved to {@link WatermarkSpec} during
      * schema resolution.
      */
+    @PublicEvolving
     public static final class UnresolvedWatermarkSpec {
 
         private final String columnName;
         private final Expression watermarkExpression;
 
-        UnresolvedWatermarkSpec(String columnName, Expression watermarkExpression) {
+        public UnresolvedWatermarkSpec(String columnName, Expression watermarkExpression) {
             this.columnName = columnName;
             this.watermarkExpression = watermarkExpression;
         }
@@ -951,6 +1042,7 @@ public final class Schema {
     }
 
     /** Super class for all kinds of constraints in an unresolved schema. */
+    @PublicEvolving
     public abstract static class UnresolvedConstraint {
 
         private final String constraintName;
@@ -990,11 +1082,12 @@ public final class Schema {
      * Declaration of a primary key that will be resolved to {@link UniqueConstraint} during schema
      * resolution.
      */
+    @PublicEvolving
     public static final class UnresolvedPrimaryKey extends UnresolvedConstraint {
 
         private final List<String> columnNames;
 
-        UnresolvedPrimaryKey(String constraintName, List<String> columnNames) {
+        public UnresolvedPrimaryKey(String constraintName, List<String> columnNames) {
             super(constraintName);
             this.columnNames = columnNames;
         }
@@ -1031,6 +1124,54 @@ public final class Schema {
         @Override
         public int hashCode() {
             return Objects.hash(super.hashCode(), columnNames);
+        }
+    }
+
+    /** Declaration of an index that will be resolved to {@link Index} during schema resolution. */
+    @PublicEvolving
+    public static final class UnresolvedIndex {
+        private final String indexName;
+        private final List<String> columnNames;
+
+        public UnresolvedIndex(String indexName, List<String> columnNames) {
+            this.indexName = indexName;
+            this.columnNames = columnNames;
+        }
+
+        public String getIndexName() {
+            return indexName;
+        }
+
+        public List<String> getColumnNames() {
+            return columnNames;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "INDEX %s (%s)",
+                    EncodingUtils.escapeIdentifier(getIndexName()),
+                    getColumnNames().stream()
+                            .map(EncodingUtils::escapeIdentifier)
+                            .collect(Collectors.joining(", ")));
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            UnresolvedIndex that = (UnresolvedIndex) o;
+            return Objects.equals(indexName, that.indexName)
+                    && Objects.equals(columnNames, that.columnNames);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(indexName, columnNames);
         }
     }
 }

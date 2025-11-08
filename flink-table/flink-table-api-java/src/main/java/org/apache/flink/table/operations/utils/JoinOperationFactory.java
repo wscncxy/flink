@@ -26,17 +26,17 @@ import org.apache.flink.table.expressions.FieldReferenceExpression;
 import org.apache.flink.table.expressions.ResolvedExpression;
 import org.apache.flink.table.expressions.utils.ResolvedExpressionDefaultVisitor;
 import org.apache.flink.table.functions.BuiltInFunctionDefinitions;
-import org.apache.flink.table.operations.CalculatedQueryOperation;
+import org.apache.flink.table.operations.CorrelatedFunctionQueryOperation;
 import org.apache.flink.table.operations.JoinQueryOperation;
 import org.apache.flink.table.operations.JoinQueryOperation.JoinType;
 import org.apache.flink.table.operations.QueryOperation;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.LogicalTypeRoot;
-import org.apache.flink.table.types.logical.utils.LogicalTypeChecks;
 
 import java.util.HashSet;
 import java.util.Set;
+
+import static org.apache.flink.table.types.logical.LogicalTypeRoot.BOOLEAN;
 
 /** Utility class for creating a valid {@link JoinQueryOperation} operation. */
 @Internal
@@ -87,7 +87,9 @@ final class JoinOperationFactory {
         }
 
         Boolean equiJoinExists = condition.accept(equiJoinExistsChecker);
-        if (correlated && right instanceof CalculatedQueryOperation && joinType != JoinType.INNER) {
+        if (correlated
+                && right instanceof CorrelatedFunctionQueryOperation
+                && joinType != JoinType.INNER) {
             throw new ValidationException(
                     "Predicate for lateral left outer join with table function can only be empty or literal true.");
         } else if (!equiJoinExists) {
@@ -101,7 +103,7 @@ final class JoinOperationFactory {
     private void verifyConditionType(ResolvedExpression condition) {
         DataType conditionType = condition.getOutputDataType();
         LogicalType logicalType = conditionType.getLogicalType();
-        if (!LogicalTypeChecks.hasRoot(logicalType, LogicalTypeRoot.BOOLEAN)) {
+        if (!logicalType.is(BOOLEAN)) {
             throw new ValidationException(
                     String.format(
                             "Filter operator requires a boolean expression as input, "

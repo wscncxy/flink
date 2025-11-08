@@ -16,9 +16,7 @@
  * limitations under the License.
  */
 
-import { SafeAny } from './safe-any';
-
-export interface JobStatusCountsInterface {
+export interface JobStatusCounts {
   CREATED: number;
   SCHEDULED: number;
   CANCELED: number;
@@ -28,6 +26,7 @@ export interface JobStatusCountsInterface {
   FINISHED: number;
   FAILED: number;
   RECONCILING: number;
+  PENDING: number;
 }
 
 interface TimestampsStatus {
@@ -44,27 +43,34 @@ interface TimestampsStatus {
   SUSPENDED: number;
 }
 
-export interface JobDetailInterface {
+export interface JobDetail {
   jid: string;
   name: string;
   isStoppable: boolean;
   state: string;
+  'job-type': string;
   'start-time': number;
   'end-time': number;
   duration: number;
   maxParallelism: number;
   now: number;
   timestamps: TimestampsStatus;
-  vertices: VerticesItemInterface[];
-  'status-counts': JobStatusCountsInterface;
+  vertices: VerticesItem[];
+  'status-counts': JobStatusCounts;
   plan: Plan;
+  'stream-graph': StreamGraph;
+  'pending-operators': number;
 }
 
 interface Plan {
   jid: string;
   name: string;
   type: string;
-  nodes: NodesItemInterface[];
+  nodes: NodesItem[];
+}
+
+interface StreamGraph {
+  nodes: NodesItemCorrect[];
 }
 
 interface InputsItem {
@@ -74,13 +80,13 @@ interface InputsItem {
   exchange: string;
 }
 
-export interface VerticesLinkInterface extends InputsItem {
+export interface VerticesLink extends InputsItem {
   source: string;
   target: string;
   id: string;
 }
 
-export interface VerticesItemInterface {
+export interface VerticesItem {
   id: string;
   name: string;
   parallelism: number;
@@ -93,11 +99,11 @@ export interface VerticesItemInterface {
   metrics: MetricsStatus;
 }
 
-export interface VerticesItemRangeInterface extends VerticesItemInterface {
+export interface VerticesItemRange extends VerticesItem {
   range: number[];
 }
 
-interface TasksStatus {
+export interface TasksStatus {
   FINISHED: number;
   SCHEDULED: number;
   CANCELED: number;
@@ -108,6 +114,7 @@ interface TasksStatus {
   RECONCILING: number;
   CANCELING: number;
   INITIALIZING: number;
+  PENDING: number;
 }
 
 interface MetricsStatus {
@@ -121,40 +128,45 @@ interface MetricsStatus {
   'write-records-complete': boolean;
 }
 
-export interface NodesItemInterface {
+export interface NodesItem {
   id: string;
   parallelism: number;
   operator: string;
   operator_strategy: string;
   description: string;
   inputs?: InputsItem[];
-  optimizer_properties: SafeAny;
+  optimizer_properties: unknown;
   width?: number;
   height?: number;
 }
 
-export interface NodesItemCorrectInterface extends NodesItemInterface {
-  detail: VerticesItemInterface | undefined;
+export interface NodesItemCorrect extends NodesItem {
+  detail: VerticesItem | undefined;
   lowWatermark?: number;
   backPressuredPercentage?: number;
   busyPercentage?: number;
+  dataSkewPercentage?: number;
+  job_vertex_id?: string;
 }
 
-export interface NodesItemLinkInterface {
+export interface NodesItemLink {
   id: string;
   source: string;
   target: string;
   width?: number;
   ship_strategy?: string;
   local_strategy?: string;
+  pending?: boolean;
 }
 
-export interface JobDetailCorrectInterface extends JobDetailInterface {
+export interface JobDetailCorrect extends JobDetail {
   plan: {
     jid: string;
     name: string;
     type: string;
-    nodes: NodesItemCorrectInterface[];
-    links: NodesItemLinkInterface[];
+    nodes: NodesItemCorrect[];
+    links: NodesItemLink[];
+    streamNodes: NodesItemCorrect[];
+    streamLinks: NodesItemLink[];
   };
 }

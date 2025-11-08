@@ -23,16 +23,20 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>1.15-SNAPSHOT</version>
-		<relativePath>..</relativePath>
+		<version>2.2-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>flink-kubernetes_${scala.binary.version}</artifactId>
+	<artifactId>flink-kubernetes</artifactId>
 	<name>Flink : Kubernetes</name>
 	<packaging>jar</packaging>
 
 	<properties>
-		<kubernetes.client.version>5.5.0</kubernetes.client.version>
+		<kubernetes.client.version>7.3.1</kubernetes.client.version>
+		<netty.override.version>4.1.108.Final</netty.override.version>
+		<surefire.module.config><!--
+			CommonTestUtils#setEnv
+			-->--add-opens=java.base/java.util=ALL-UNNAMED
+		</surefire.module.config>
 	</properties>
 
 	<dependencies>
@@ -41,7 +45,7 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-clients_${scala.binary.version}</artifactId>
+			<artifactId>flink-clients</artifactId>
 			<version>${project.version}</version>
 			<scope>provided</scope>
 		</dependency>
@@ -63,6 +67,21 @@ under the License.
 			<groupId>io.fabric8</groupId>
 			<artifactId>kubernetes-client</artifactId>
 			<version>${kubernetes.client.version}</version>
+			<optional>${flink.markBundledAsOptional}</optional>
+			<exclusions>
+				<exclusion>
+					<groupId>io.fabric8</groupId>
+					<artifactId>kubernetes-httpclient-vertx</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- Since 7.0.0, Fabric8 uses Vert.x as its HTTP client, but we want to use OkHttp to keep the same dependencies as used before this version. -->
+		<dependency>
+			<groupId>io.fabric8</groupId>
+			<artifactId>kubernetes-httpclient-okhttp</artifactId>
+			<version>${kubernetes.client.version}</version>
+			<optional>${flink.markBundledAsOptional}</optional>
 		</dependency>
 
 		<!-- test dependencies -->
@@ -83,31 +102,31 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-clients_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
-			<type>test-jar</type>
-			<scope>test</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-test-utils_${scala.binary.version}</artifactId>
+			<artifactId>flink-test-utils</artifactId>
 			<version>${project.version}</version>
 			<scope>test</scope>
 		</dependency>
 
 	</dependencies>
 
+	<dependencyManagement>
+		<dependencies>
+			<!--
+				This should be removed once Netty is upgraded to at least 4.1.108.Final.
+				Important to note that this only affects test scope.
+			 	Version 4.1.100.Final does not contain a class that's required by Vert.x, which is used by kubernetes-server-mock.
+			 -->
+			<dependency>
+				<groupId>io.netty</groupId>
+				<artifactId>netty-codec-http</artifactId>
+				<version>${netty.override.version}</version>
+				<scope>test</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
 	<build>
 		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-plugin</artifactId>
-				<configuration>
-					<reuseForks>true</reuseForks>
-					<forkCount>1</forkCount>
-				</configuration>
-			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
@@ -121,9 +140,7 @@ under the License.
 						<configuration>
 							<artifactSet>
 								<includes combine.children="append">
-									<include>io.fabric8:kubernetes-client</include>
-									<include>io.fabric8:kubernetes-model-*</include>
-									<include>io.fabric8:zjsonpatch</include>
+									<include>io.fabric8:*</include>
 
 									<!-- Shade all the dependencies of kubernetes client  -->
 									<include>com.fasterxml.jackson.core:jackson-core</include>
@@ -133,8 +150,8 @@ under the License.
 									<include>com.fasterxml.jackson.datatype:jackson-datatype-jsr310</include>
 									<include>com.squareup.okhttp3:*</include>
 									<include>com.squareup.okio:okio</include>
+									<include>org.snakeyaml:*</include>
 									<include>org.yaml:*</include>
-									<include>dk.brics.automaton:*</include>
 
 									<include>META-INF/services/org.apache.flink.*</include>
 								</includes>
@@ -155,8 +172,44 @@ under the License.
 										<exclude>license.header</exclude>
 									</excludes>
 								</filter>
+								<filter>
+									<artifact>com.fasterxml.jackson*:*</artifact>
+									<excludes>
+										<exclude>META-INF/**/module-info.class</exclude>
+										<exclude>META-INF/*LICENSE</exclude>
+										<exclude>META-INF/*NOTICE</exclude>
+									</excludes>
+								</filter>
+								<filter>
+									<artifact>org.yaml:*</artifact>
+									<excludes>
+										<exclude>META-INF/**/module-info.class</exclude>
+									</excludes>
+								</filter>
 							</filters>
 							<relocations>
+								<!-- When "io.fabric8:kubernetes-client" is bumped, make sure to check JDK-specific Jackson classes,
+								 	 and introduce new versions when necessary. -->
+								<relocation>
+									<pattern>META-INF/versions/11/com/fasterxml/jackson</pattern>
+									<shadedPattern>META-INF/versions/11/org/apache/flink/kubernetes/shaded/com/fasterxml/jackson</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>META-INF/versions/17/com/fasterxml/jackson</pattern>
+									<shadedPattern>META-INF/versions/17/org/apache/flink/kubernetes/shaded/com/fasterxml/jackson</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>META-INF/versions/19/com/fasterxml/jackson</pattern>
+									<shadedPattern>META-INF/versions/19/org/apache/flink/kubernetes/shaded/com/fasterxml/jackson</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>META-INF/versions/21/com/fasterxml/jackson</pattern>
+									<shadedPattern>META-INF/versions/21/org/apache/flink/kubernetes/shaded/com/fasterxml/jackson</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>META-INF/versions/22/com/fasterxml/jackson</pattern>
+									<shadedPattern>META-INF/versions/22/org/apache/flink/kubernetes/shaded/com/fasterxml/jackson</shadedPattern>
+								</relocation>
 								<relocation>
 									<pattern>com.fasterxml.jackson</pattern>
 									<shadedPattern>org.apache.flink.kubernetes.shaded.com.fasterxml.jackson</shadedPattern>
@@ -177,12 +230,20 @@ under the License.
 									<shadedPattern>org.apache.flink.kubernetes.shaded.okio</shadedPattern>
 								</relocation>
 								<relocation>
+									<pattern>org.snakeyaml</pattern>
+									<shadedPattern>org.apache.flink.kubernetes.shaded.org.snakeyaml</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>META-INF/versions/9/org/yaml/snakeyaml</pattern>
+									<shadedPattern>META-INF/versions/9/org/apache/flink/kubernetes/shaded/org/yaml/snakeyaml</shadedPattern>
+								</relocation>
+								<relocation>
 									<pattern>org.yaml</pattern>
 									<shadedPattern>org.apache.flink.kubernetes.shaded.org.yaml</shadedPattern>
 								</relocation>
 								<relocation>
-									<pattern>dk.brics.automaton</pattern>
-									<shadedPattern>org.apache.flink.kubernetes.shaded.dk.brics.automaton</shadedPattern>
+								    <pattern>io.fabric8</pattern>
+								    <shadedPattern>org.apache.flink.kubernetes.shaded.io.fabric8</shadedPattern>
 								</relocation>
 							</relocations>
 						</configuration>

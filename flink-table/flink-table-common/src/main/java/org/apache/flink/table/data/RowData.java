@@ -25,6 +25,7 @@ import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.StructuredType;
 import org.apache.flink.types.RowKind;
+import org.apache.flink.types.variant.Variant;
 
 import javax.annotation.Nullable;
 
@@ -201,6 +202,9 @@ public interface RowData {
      */
     RowData getRow(int pos, int numFields);
 
+    /** Returns the variant value at the given position. */
+    Variant getVariant(int pos);
+
     // ------------------------------------------------------------------------------------------
     // Access Utilities
     // ------------------------------------------------------------------------------------------
@@ -210,7 +214,7 @@ public interface RowData {
      * position.
      *
      * @param fieldType the element type of the row
-     * @param fieldPos the element type of the row
+     * @param fieldPos the element position of the row
      */
     static FieldGetter createFieldGetter(LogicalType fieldType, int fieldPos) {
         final FieldGetter fieldGetter;
@@ -280,14 +284,15 @@ public interface RowData {
             case RAW:
                 fieldGetter = row -> row.getRawValue(fieldPos);
                 break;
+            case VARIANT:
+                fieldGetter = row -> row.getVariant(fieldPos);
+                break;
             case NULL:
             case SYMBOL:
             case UNRESOLVED:
+            case DESCRIPTOR:
             default:
                 throw new IllegalArgumentException();
-        }
-        if (!fieldType.isNullable()) {
-            return fieldGetter;
         }
         return row -> {
             if (row.isNullAt(fieldPos)) {
@@ -302,7 +307,13 @@ public interface RowData {
      *
      * @see #createFieldGetter(LogicalType, int)
      */
+    @PublicEvolving
     interface FieldGetter extends Serializable {
+        /**
+         * Converters and serializers always support nullability. The NOT NULL constraint is only
+         * considered on SQL semantic level but not data transfer. E.g. partial deletes (i.e.
+         * key-only upserts) set all non-key fields to null, regardless of logical type.
+         */
         @Nullable
         Object getFieldOrNull(RowData row);
     }

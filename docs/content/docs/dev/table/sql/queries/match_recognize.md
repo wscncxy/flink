@@ -92,13 +92,13 @@ project.
 ```xml
 <dependency>
   <groupId>org.apache.flink</groupId>
-  <artifactId>flink-cep{{< scala_version >}}</artifactId>
+  <artifactId>flink-cep</artifactId>
   <version>{{< version >}}</version>
 </dependency>
 ```
 
 Alternatively, you can also add the dependency to the cluster classpath (see the
-[dependency section]({{< ref "docs/dev/datastream/project-configuration" >}}) for more information).
+[dependency section]({{< ref "docs/dev/configuration/overview" >}}) for more information).
 
 If you want to use the `MATCH_RECOGNIZE` clause in the
 [SQL Client]({{< ref "docs/dev/table/sqlClient" >}}), you don't have to do anything as all the
@@ -267,8 +267,8 @@ look at the [event stream navigation](#pattern-navigation) section.
 ### Aggregations
 
 Aggregations can be used in `DEFINE` and `MEASURES` clauses. Both
-[built-in]({{{{< ref "docs/dev/table/functions/systemFunctions" >}}) and custom
-[user defined]({{{{< ref "docs/dev/table/functions/udfs" >}}) functions are supported.
+[built-in]({{< ref "docs/dev/table/functions/systemfunctions" >}}) and custom
+[user defined]({{< ref "docs/dev/table/functions/udfs" >}}) functions are supported.
 
 Aggregate functions are applied to each subset of rows mapped to a match. In order to understand
 how those subsets are evaluated have a look at the [event stream navigation](#pattern-navigation)
@@ -481,7 +481,7 @@ FROM Ticker
         AFTER MATCH SKIP PAST LAST ROW
         PATTERN (A B* C) WITHIN INTERVAL '1' HOUR
         DEFINE
-            B AS B.price > A.price - 10
+            B AS B.price > A.price - 10,
             C AS C.price < A.price - 10
     )
 ```
@@ -723,9 +723,7 @@ variable. This can be expressed with two corresponding functions:
   <tbody>
   <tr>
     <td>
-```text
-LAST(variable.field, n)
-```
+        <code>LAST(variable.field, n)</code>
     </td>
     <td>
       <p>Returns the value of the field from the event that was mapped to the <i>n</i>-th
@@ -734,9 +732,7 @@ LAST(variable.field, n)
   </tr>
   <tr>
     <td>
-```text
-FIRST(variable.field, n)
-```
+        <code>FIRST(variable.field, n)</code>
     </td>
     <td>
       <p>Returns the value of the field from the event that was mapped to the <i>n</i>-th element
@@ -1130,8 +1126,6 @@ Unsupported features include:
   the `DEFINE` and `MEASURES` clauses.
 * Physical offsets - `PREV/NEXT`, which indexes all events seen rather than only those that were
   mapped to a pattern variable (as in [logical offsets](#logical-offsets) case).
-* Extracting time attributes - there is currently no possibility to get a time attribute for
-  subsequent time-based operations.
 * `MATCH_RECOGNIZE` is supported only for SQL. There is no equivalent in the Table API.
 * Aggregations:
   * distinct aggregations are not supported.

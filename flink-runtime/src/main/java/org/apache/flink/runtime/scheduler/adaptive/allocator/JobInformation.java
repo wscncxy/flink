@@ -18,7 +18,10 @@
 package org.apache.flink.runtime.scheduler.adaptive.allocator;
 
 import org.apache.flink.runtime.jobgraph.JobVertexID;
+import org.apache.flink.runtime.jobmanager.scheduler.CoLocationGroup;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
+
+import javax.annotation.Nullable;
 
 import java.util.Collection;
 
@@ -34,14 +37,33 @@ public interface JobInformation {
      */
     Collection<SlotSharingGroup> getSlotSharingGroups();
 
+    /**
+     * Returns all co-location groups of the job.
+     *
+     * <p>Attention: The returned co-location groups should never be modified (its are indeed
+     * mutable)!
+     *
+     * @return all co-location groups of the job
+     */
+    Collection<CoLocationGroup> getCoLocationGroups();
+
     VertexInformation getVertexInformation(JobVertexID jobVertexId);
+
+    Iterable<VertexInformation> getVertices();
 
     /** Information about a single vertex. */
     interface VertexInformation {
         JobVertexID getJobVertexID();
 
+        int getMinParallelism();
+
         int getParallelism();
 
+        int getMaxParallelism();
+
         SlotSharingGroup getSlotSharingGroup();
+
+        @Nullable
+        CoLocationGroup getCoLocationGroup();
     }
 }

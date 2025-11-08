@@ -25,27 +25,40 @@ import org.apache.flink.api.java.ClosureCleaner;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.configuration.PipelineOptions;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.catalog.CatalogFunction;
+import org.apache.flink.table.expressions.Expression;
+import org.apache.flink.table.functions.SpecializedFunction.ExpressionEvaluator;
+import org.apache.flink.table.functions.SpecializedFunction.ExpressionEvaluatorFactory;
 import org.apache.flink.table.functions.SpecializedFunction.SpecializedContext;
 import org.apache.flink.table.functions.python.utils.PythonFunctionUtils;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.extraction.ExtractionUtils;
+import org.apache.flink.table.types.extraction.ExtractionUtils.Autoboxing;
 import org.apache.flink.table.types.inference.CallContext;
 import org.apache.flink.util.InstantiationUtil;
 
 import javax.annotation.Nullable;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import static org.apache.flink.api.java.typeutils.TypeExtractionUtils.getAllDeclaredMethods;
+import static org.apache.flink.api.java.typeutils.TypeExtractionUtils.getParameterizedType;
+import static org.apache.flink.api.java.typeutils.TypeExtractionUtils.isGenericOfClass;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -61,6 +74,8 @@ public final class UserDefinedFunctionHelper {
     // method names of code generated UDFs
 
     public static final String SCALAR_EVAL = "eval";
+
+    public static final String ASYNC_SCALAR_EVAL = "eval";
 
     public static final String TABLE_EVAL = "eval";
 
@@ -81,6 +96,12 @@ public final class UserDefinedFunctionHelper {
     public static final String TABLE_AGGREGATE_EMIT_RETRACT = "emitUpdateWithRetract";
 
     public static final String ASYNC_TABLE_EVAL = "eval";
+
+    public static final String PROCESS_TABLE_EVAL = "eval";
+
+    public static final String PROCESS_TABLE_ON_TIMER = "onTimer";
+
+    public static final String DEFAULT_ACCUMULATOR_NAME = "acc";
 
     /**
      * Tries to infer the TypeInformation of an AggregateFunction's accumulator type.
@@ -189,7 +210,6 @@ public final class UserDefinedFunctionHelper {
      *
      * <p>Requires access to {@link ReadableConfig} if Python functions should be supported.
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
     public static UserDefinedFunction instantiateFunction(
             ClassLoader classLoader,
             @Nullable ReadableConfig config,
@@ -209,7 +229,7 @@ public final class UserDefinedFunctionHelper {
                 case SCALA:
                     final Class<?> functionClass =
                             classLoader.loadClass(catalogFunction.getClassName());
-                    return UserDefinedFunctionHelper.instantiateFunction((Class) functionClass);
+                    return UserDefinedFunctionHelper.instantiateFunction(functionClass);
                 default:
                     throw new IllegalArgumentException(
                             "Unknown function language: " + catalogFunction.getFunctionLanguage());
@@ -223,11 +243,17 @@ public final class UserDefinedFunctionHelper {
     /**
      * Instantiates a {@link UserDefinedFunction} assuming a JVM function with default constructor.
      */
-    public static UserDefinedFunction instantiateFunction(
-            Class<? extends UserDefinedFunction> functionClass) {
-        validateClass(functionClass, true);
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static UserDefinedFunction instantiateFunction(Class<?> functionClass) {
+        if (!UserDefinedFunction.class.isAssignableFrom(functionClass)) {
+            throw new ValidationException(
+                    String.format(
+                            "Function '%s' does not extend from '%s'.",
+                            functionClass.getName(), UserDefinedFunction.class.getName()));
+        }
+        validateClass((Class) functionClass, true);
         try {
-            return functionClass.newInstance();
+            return (UserDefinedFunction) functionClass.newInstance();
         } catch (Exception e) {
             throw new ValidationException(
                     String.format(
@@ -241,6 +267,39 @@ public final class UserDefinedFunctionHelper {
     public static void prepareInstance(ReadableConfig config, UserDefinedFunction function) {
         validateClass(function.getClass(), false);
         cleanFunction(config, function);
+    }
+
+    /**
+     * Returns whether a {@link UserDefinedFunction} can be easily serialized and identified by only
+     * a fully qualified class name. It must have a default constructor and no serializable fields.
+     *
+     * <p>Other properties (such as checks for abstract classes) are validated at the entry points
+     * of the API, see {@link #prepareInstance(ReadableConfig, UserDefinedFunction)}.
+     */
+    public static boolean isClassNameSerializable(UserDefinedFunction function) {
+        final Class<?> functionClass = function.getClass();
+        if (!InstantiationUtil.hasPublicNullaryConstructor(functionClass)) {
+            // function must be parameterized
+            return false;
+        }
+        Class<?> currentClass = functionClass;
+        while (!currentClass.equals(UserDefinedFunction.class)) {
+            for (Field field : currentClass.getDeclaredFields()) {
+                if (!Modifier.isTransient(field.getModifiers())
+                        && !Modifier.isStatic(field.getModifiers())) {
+                    // function seems to be stateful
+                    return false;
+                }
+            }
+            currentClass = currentClass.getSuperclass();
+        }
+        return true;
+    }
+
+    /** Name for anonymous, inline functions. */
+    public static String generateInlineFunctionName(UserDefinedFunction function) {
+        // use "*...*" to indicate anonymous function similar to types at other locations
+        return String.format("*%s*", function.functionIdentifier());
     }
 
     /**
@@ -272,9 +331,13 @@ public final class UserDefinedFunctionHelper {
                 methods.stream()
                         .anyMatch(
                                 method ->
-                                        ExtractionUtils.isInvokable(method, argumentClasses)
+                                        // Strict autoboxing is disabled for backwards compatibility
+                                        ExtractionUtils.isInvokable(
+                                                        Autoboxing.JVM, method, argumentClasses)
                                                 && ExtractionUtils.isAssignable(
-                                                        outputClass, method.getReturnType(), true));
+                                                        outputClass,
+                                                        method.getReturnType(),
+                                                        Autoboxing.JVM));
         if (!isMatching) {
             throw new ValidationException(
                     String.format(
@@ -299,7 +362,8 @@ public final class UserDefinedFunctionHelper {
             FunctionDefinition definition,
             CallContext callContext,
             ClassLoader builtInClassLoader,
-            @Nullable ReadableConfig configuration) {
+            @Nullable ReadableConfig configuration,
+            @Nullable ExpressionEvaluatorFactory evaluatorFactory) {
         if (definition instanceof SpecializedFunction) {
             final SpecializedFunction specialized = (SpecializedFunction) definition;
             final SpecializedContext specializedContext =
@@ -321,6 +385,47 @@ public final class UserDefinedFunctionHelper {
                         @Override
                         public ClassLoader getBuiltInClassLoader() {
                             return builtInClassLoader;
+                        }
+
+                        @Override
+                        public ExpressionEvaluator createEvaluator(
+                                Expression expression,
+                                DataType outputDataType,
+                                DataTypes.Field... args) {
+                            if (evaluatorFactory == null) {
+                                throw new TableException(
+                                        "Access to expression evaluation is currently not supported "
+                                                + "for all kinds of calls.");
+                            }
+                            return evaluatorFactory.createEvaluator(
+                                    expression, outputDataType, args);
+                        }
+
+                        @Override
+                        public ExpressionEvaluator createEvaluator(
+                                String sqlExpression,
+                                DataType outputDataType,
+                                DataTypes.Field... args) {
+                            if (evaluatorFactory == null) {
+                                throw new TableException(
+                                        "Access to expression evaluation is currently not supported "
+                                                + "for all kinds of calls.");
+                            }
+                            return evaluatorFactory.createEvaluator(
+                                    sqlExpression, outputDataType, args);
+                        }
+
+                        @Override
+                        public ExpressionEvaluator createEvaluator(
+                                BuiltInFunctionDefinition function,
+                                DataType outputDataType,
+                                DataType... args) {
+                            if (evaluatorFactory == null) {
+                                throw new TableException(
+                                        "Access to expression evaluation is currently not supported "
+                                                + "for all kinds of calls.");
+                            }
+                            return evaluatorFactory.createEvaluator(function, outputDataType, args);
                         }
                     };
             final UserDefinedFunction udf = specialized.specialize(specializedContext);
@@ -374,10 +479,14 @@ public final class UserDefinedFunctionHelper {
             Class<? extends UserDefinedFunction> functionClass) {
         if (ScalarFunction.class.isAssignableFrom(functionClass)) {
             validateImplementationMethod(functionClass, false, false, SCALAR_EVAL);
+        } else if (AsyncScalarFunction.class.isAssignableFrom(functionClass)) {
+            validateImplementationMethod(functionClass, false, false, ASYNC_SCALAR_EVAL);
+            validateAsyncImplementationMethod(functionClass, false, ASYNC_SCALAR_EVAL);
         } else if (TableFunction.class.isAssignableFrom(functionClass)) {
             validateImplementationMethod(functionClass, true, false, TABLE_EVAL);
         } else if (AsyncTableFunction.class.isAssignableFrom(functionClass)) {
             validateImplementationMethod(functionClass, true, false, ASYNC_TABLE_EVAL);
+            validateAsyncImplementationMethod(functionClass, true, ASYNC_TABLE_EVAL);
         } else if (AggregateFunction.class.isAssignableFrom(functionClass)) {
             validateImplementationMethod(functionClass, true, false, AGGREGATE_ACCUMULATE);
             validateImplementationMethod(functionClass, true, true, AGGREGATE_RETRACT);
@@ -433,6 +542,55 @@ public final class UserDefinedFunctionHelper {
                             nameSet.stream()
                                     .map(s -> "'" + s + "'")
                                     .collect(Collectors.joining(" or "))));
+        }
+    }
+
+    private static void validateAsyncImplementationMethod(
+            Class<? extends UserDefinedFunction> clazz,
+            boolean verifyFutureContainsCollection,
+            String... methodNameOptions) {
+        final Set<String> nameSet = new HashSet<>(Arrays.asList(methodNameOptions));
+        final List<Method> methods = getAllDeclaredMethods(clazz);
+        for (Method method : methods) {
+            if (!nameSet.contains(method.getName())) {
+                continue;
+            }
+            if (!method.getReturnType().equals(Void.TYPE)) {
+                throw new ValidationException(
+                        String.format(
+                                "Method '%s' of function class '%s' must be void.",
+                                method.getName(), clazz.getName()));
+            }
+            boolean foundParam = false;
+            if (method.getParameterCount() >= 1) {
+                Type firstParam = method.getGenericParameterTypes()[0];
+                firstParam = ExtractionUtils.resolveVariableWithClassContext(clazz, firstParam);
+                if (isGenericOfClass(CompletableFuture.class, firstParam)) {
+                    Optional<ParameterizedType> parameterized = getParameterizedType(firstParam);
+                    if (!verifyFutureContainsCollection) {
+                        foundParam = true;
+                    } else if (parameterized.isPresent()
+                            && parameterized.get().getActualTypeArguments().length > 0) {
+                        Type firstTypeArgument = parameterized.get().getActualTypeArguments()[0];
+                        if (isGenericOfClass(Collection.class, firstTypeArgument)) {
+                            foundParam = true;
+                        }
+                    }
+                }
+            }
+            if (!foundParam) {
+                if (!verifyFutureContainsCollection) {
+                    throw new ValidationException(
+                            String.format(
+                                    "Method '%s' of function class '%s' must have a first argument of type java.util.concurrent.CompletableFuture.",
+                                    method.getName(), clazz.getName()));
+                } else {
+                    throw new ValidationException(
+                            String.format(
+                                    "Method '%s' of function class '%s' must have a first argument of type java.util.concurrent.CompletableFuture<java.util.Collection>.",
+                                    method.getName(), clazz.getName()));
+                }
+            }
         }
     }
 

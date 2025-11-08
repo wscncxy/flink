@@ -18,7 +18,6 @@
 package org.apache.flink.table.data.writer;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.core.memory.MemorySegment;
@@ -41,9 +40,12 @@ import org.apache.flink.table.runtime.typeutils.ArrayDataSerializer;
 import org.apache.flink.table.runtime.typeutils.MapDataSerializer;
 import org.apache.flink.table.runtime.typeutils.RawValueDataSerializer;
 import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
+import org.apache.flink.types.variant.BinaryVariant;
+import org.apache.flink.types.variant.Variant;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
@@ -117,6 +119,19 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
         BinaryMapData binary = serializer.toBinaryMap(input);
         writeSegmentsToVarLenPart(
                 pos, binary.getSegments(), binary.getOffset(), binary.getSizeInBytes());
+    }
+
+    @Override
+    public void writeVariant(int pos, Variant variant) {
+        byte[] metadata = ((BinaryVariant) variant).getMetadata();
+        byte[] value = ((BinaryVariant) variant).getValue();
+        int metadataLen = metadata.length;
+
+        int length = metadata.length + value.length + 4;
+        ByteBuffer buffer = ByteBuffer.allocate(length);
+        buffer.putInt(metadataLen).put(metadata).put(value);
+
+        writeBytesToVarLenPart(pos, buffer.array(), length);
     }
 
     private DataOutputViewStreamWrapper getOutputView() {
@@ -333,7 +348,7 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
         segment.putLong(fieldOffset, offsetAndSize);
     }
 
-    @VisibleForTesting
+    @Internal
     public MemorySegment getSegments() {
         return segment;
     }

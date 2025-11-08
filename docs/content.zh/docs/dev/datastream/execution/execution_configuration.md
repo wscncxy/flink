@@ -3,7 +3,7 @@ title: "执行配置"
 weight: 11
 type: docs
 aliases:
-  - /dev/execution_configuration.html
+  - /zh/dev/execution_configuration.html
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -37,10 +37,10 @@ StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironm
 ExecutionConfig executionConfig = env.getConfig();
 ```
 {{< /tab >}}
-{{< tab "Scala" >}}
-```scala
-val env = StreamExecutionEnvironment.getExecutionEnvironment
-var executionConfig = env.getConfig
+{{< tab "Python" >}}
+```python
+env = StreamExecutionEnvironment.get_execution_environment()
+execution_config = env.get_config()
 ```
 {{< /tab >}}
 {{< /tabs >}}

@@ -22,7 +22,11 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.MemorySize;
+import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.configuration.RpcOptions;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.operators.collect.CollectResultIterator;
 import org.apache.flink.streaming.api.operators.collect.CollectSinkOperator;
@@ -32,27 +36,37 @@ import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.internal.ResultProvider;
 import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.connector.ChangelogMode;
+import org.apache.flink.table.connector.ProviderContext;
 import org.apache.flink.table.connector.RuntimeConverter;
 import org.apache.flink.table.connector.sink.DataStreamSinkProvider;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.planner.codegen.CodeGeneratorContext;
+import org.apache.flink.table.planner.functions.casting.RowDataToStringConverterImpl;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.utils.print.RowDataToStringConverter;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.function.Function;
 
 /** Table sink for {@link TableResult#collect()}. */
 @Internal
-final class CollectDynamicSink implements DynamicTableSink {
+public final class CollectDynamicSink implements DynamicTableSink {
+
+    private static final String COLLECT_TRANSFORMATION = "collect";
 
     private final ObjectIdentifier tableIdentifier;
     private final DataType consumedDataType;
     private final MemorySize maxBatchSize;
     private final Duration socketTimeout;
     private final ClassLoader classLoader;
+    private final ZoneId sessionZoneId;
+    private final boolean legacyCastBehaviour;
+    private final ReadableConfig config;
 
     // mutable attributes
     private CollectResultIterator<RowData> iterator;
@@ -63,16 +77,28 @@ final class CollectDynamicSink implements DynamicTableSink {
             DataType consumedDataType,
             MemorySize maxBatchSize,
             Duration socketTimeout,
-            ClassLoader classLoader) {
+            ClassLoader classLoader,
+            ZoneId sessionZoneId,
+            boolean legacyCastBehaviour,
+            ReadableConfig config) {
         this.tableIdentifier = tableIdentifier;
         this.consumedDataType = consumedDataType;
         this.maxBatchSize = maxBatchSize;
         this.socketTimeout = socketTimeout;
         this.classLoader = classLoader;
+        this.sessionZoneId = sessionZoneId;
+        this.legacyCastBehaviour = legacyCastBehaviour;
+        this.config = config;
     }
 
     public ResultProvider getSelectResultProvider() {
-        return new CollectResultProvider();
+        return new CollectResultProvider(
+                new RowDataToStringConverterImpl(
+                        consumedDataType,
+                        sessionZoneId,
+                        classLoader,
+                        legacyCastBehaviour,
+                        new CodeGeneratorContext(config, classLoader)));
     }
 
     @Override
@@ -82,45 +108,65 @@ final class CollectDynamicSink implements DynamicTableSink {
 
     @Override
     public SinkRuntimeProvider getSinkRuntimeProvider(Context context) {
-        return (DataStreamSinkProvider)
-                inputStream -> {
-                    final CheckpointConfig checkpointConfig =
-                            inputStream.getExecutionEnvironment().getCheckpointConfig();
-                    final ExecutionConfig config = inputStream.getExecutionConfig();
+        return new DataStreamSinkProvider() {
+            @Override
+            public DataStreamSink<?> consumeDataStream(
+                    ProviderContext providerContext, DataStream<RowData> inputStream) {
+                final CheckpointConfig checkpointConfig =
+                        inputStream.getExecutionEnvironment().getCheckpointConfig();
+                final ExecutionConfig config = inputStream.getExecutionConfig();
 
-                    final TypeSerializer<RowData> externalSerializer =
-                            InternalTypeInfo.<RowData>of(consumedDataType.getLogicalType())
-                                    .createSerializer(config);
-                    final String accumulatorName = tableIdentifier.getObjectName();
+                final TypeSerializer<RowData> externalSerializer =
+                        InternalTypeInfo.<RowData>of(consumedDataType.getLogicalType())
+                                .createSerializer(config.getSerializerConfig());
+                final String accumulatorName = tableIdentifier.getObjectName();
 
-                    final CollectSinkOperatorFactory<RowData> factory =
-                            new CollectSinkOperatorFactory<>(
-                                    externalSerializer,
-                                    accumulatorName,
-                                    maxBatchSize,
-                                    socketTimeout);
-                    final CollectSinkOperator<RowData> operator =
-                            (CollectSinkOperator<RowData>) factory.getOperator();
+                final CollectSinkOperatorFactory<RowData> factory =
+                        new CollectSinkOperatorFactory<>(
+                                externalSerializer, accumulatorName, maxBatchSize, socketTimeout);
+                final CollectSinkOperator<RowData> operator =
+                        (CollectSinkOperator<RowData>) factory.getOperator();
+                final long resultFetchTimeout =
+                        inputStream
+                                .getExecutionEnvironment()
+                                .getConfiguration()
+                                .get(RpcOptions.ASK_TIMEOUT_DURATION)
+                                .toMillis();
 
-                    this.iterator =
-                            new CollectResultIterator<>(
-                                    operator.getOperatorIdFuture(),
-                                    externalSerializer,
-                                    accumulatorName,
-                                    checkpointConfig);
-                    this.converter = context.createDataStructureConverter(consumedDataType);
-                    this.converter.open(RuntimeConverter.Context.create(classLoader));
+                final CollectStreamSink<RowData> sink =
+                        new CollectStreamSink<>(inputStream, factory);
+                String operatorUid =
+                        providerContext
+                                .generateUid(COLLECT_TRANSFORMATION)
+                                .orElse("tableCollectSink_" + sink.getTransformation().getId());
 
-                    final CollectStreamSink<RowData> sink =
-                            new CollectStreamSink<>(inputStream, factory);
-                    return sink.name("Collect table sink");
-                };
+                iterator =
+                        new CollectResultIterator<>(
+                                operatorUid,
+                                externalSerializer,
+                                accumulatorName,
+                                checkpointConfig,
+                                resultFetchTimeout);
+                converter = context.createDataStructureConverter(consumedDataType);
+                converter.open(RuntimeConverter.Context.create(classLoader));
+
+                sink.uid(operatorUid);
+                return sink.name("Collect table sink");
+            }
+        };
     }
 
     @Override
     public DynamicTableSink copy() {
         return new CollectDynamicSink(
-                tableIdentifier, consumedDataType, maxBatchSize, socketTimeout, classLoader);
+                tableIdentifier,
+                consumedDataType,
+                maxBatchSize,
+                socketTimeout,
+                classLoader,
+                sessionZoneId,
+                legacyCastBehaviour,
+                config);
     }
 
     @Override
@@ -130,8 +176,14 @@ final class CollectDynamicSink implements DynamicTableSink {
 
     private final class CollectResultProvider implements ResultProvider {
 
+        private final RowDataToStringConverter rowDataToStringConverter;
+
         private CloseableRowIteratorWrapper<RowData> rowDataIterator;
         private CloseableRowIteratorWrapper<Row> rowIterator;
+
+        private CollectResultProvider(RowDataToStringConverter rowDataToStringConverter) {
+            this.rowDataToStringConverter = rowDataToStringConverter;
+        }
 
         @Override
         public ResultProvider setJobClient(JobClient jobClient) {
@@ -159,10 +211,22 @@ final class CollectDynamicSink implements DynamicTableSink {
         }
 
         @Override
+        public RowDataToStringConverter getRowDataStringConverter() {
+            return rowDataToStringConverter;
+        }
+
+        @Override
         public boolean isFirstRowReady() {
             return (this.rowDataIterator != null && this.rowDataIterator.firstRowProcessed)
                     || (this.rowIterator != null && this.rowIterator.firstRowProcessed)
                     || iterator.hasNext();
+        }
+
+        @Override
+        public void reset() {
+            iterator = iterator.copy();
+            rowDataIterator = null;
+            rowIterator = null;
         }
     }
 

@@ -18,7 +18,6 @@
 
 package org.apache.flink.runtime.rest.handler.job.rescaling;
 
-import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.rest.handler.HandlerRequest;
 import org.apache.flink.runtime.rest.handler.RestHandlerException;
@@ -35,12 +34,17 @@ import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.HttpResponseSt
 
 import javax.annotation.Nonnull;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /** Rest handler to trigger and poll the rescaling of a running job. */
 public class RescalingHandlers
         extends AbstractAsynchronousOperationHandlers<AsynchronousJobOperationKey, Acknowledge> {
+
+    public RescalingHandlers(Duration cacheDuration) {
+        super(cacheDuration);
+    }
 
     private static RestHandlerException featureDisabledException() {
         return new RestHandlerException(
@@ -55,7 +59,7 @@ public class RescalingHandlers
 
         public RescalingTriggerHandler(
                 GatewayRetriever<? extends RestfulGateway> leaderRetriever,
-                Time timeout,
+                Duration timeout,
                 Map<String, String> responseHeaders) {
             super(leaderRetriever, timeout, responseHeaders, RescalingTriggerHeaders.getInstance());
         }
@@ -88,7 +92,7 @@ public class RescalingHandlers
 
         public RescalingStatusHandler(
                 GatewayRetriever<? extends RestfulGateway> leaderRetriever,
-                Time timeout,
+                Duration timeout,
                 Map<String, String> responseHeaders) {
             super(leaderRetriever, timeout, responseHeaders, RescalingStatusHeaders.getInstance());
         }

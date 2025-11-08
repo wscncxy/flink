@@ -117,8 +117,6 @@ Operators can get the `ExternalResourceInfo` set of a specific external resource
 `getExternalResourceInfos(String resourceName)`. The `resourceName` here should have the same value as the name configured in the
 external resource list. It can be used as follows:
 
-{{< tabs "81f076a6-0048-4fb0-88b8-be8508e969c8" >}}
-{{< tab "Java" >}}
 ```java
 public class ExternalResourceMapFunction extends RichMapFunction<String, String> {
     private static final String RESOURCE_NAME = "foo";
@@ -134,25 +132,6 @@ public class ExternalResourceMapFunction extends RichMapFunction<String, String>
     }
 }
 ```
-{{< /tab >}}
-{{< tab "Scala" >}}
-```scala
-class ExternalResourceMapFunction extends RichMapFunction[(String, String)] {
-    var RESOURCE_NAME = "foo"
-
-    override def map(value: String): String = {
-        val externalResourceInfos = getRuntimeContext().getExternalResourceInfos(RESOURCE_NAME)
-        val addresses = new util.ArrayList[String]
-        externalResourceInfos.asScala.foreach(
-        externalResourceInfo => addresses.add(externalResourceInfo.getProperty("address").get()))
-
-        // map function with addresses.
-        // ...
-    }
-}
-```
-{{< /tab >}}
-{{< /tabs >}}
 
 Each `ExternalResourceInfo` contains one or more properties with keys representing the different dimensions of the resource.
 You could get all valid keys by `ExternalResourceInfo#getKeys`.
@@ -174,8 +153,6 @@ To implement a plugin for your custom resource type, you need to:
 
 For example, to implement a plugin for external resource named "FPGA", you need to implement `FPGADriver` and `FPGADriverFactory` first:
 
-{{< tabs "6d799b04-fa41-42b6-9933-cb1fe288cd81" >}}
-{{< tab "Java" >}}
 ```java
 public class FPGADriver implements ExternalResourceDriver {
 	@Override
@@ -204,34 +181,6 @@ public class FPGAInfo implements ExternalResourceInfo {
 	}
 }
 ```
-{{< /tab >}}
-{{< tab "Scala" >}}
-```scala
-class FPGADriver extends ExternalResourceDriver {
-  override def retrieveResourceInfo(amount: Long): Set[FPGAInfo] = {
-    // return the information set of "FPGA"
-  }
-}
-
-class FPGADriverFactory extends ExternalResourceDriverFactory {
-  override def createExternalResourceDriver(config: Configuration): ExternalResourceDriver = {
-    new FPGADriver()
-  }
-}
-
-// Also implement FPGAInfo which contains basic properties of "FPGA" resource.
-class FPGAInfo extends ExternalResourceInfo {
-  override def getProperty(key: String): Option[String] = {
-    // return the property with the given key.
-  }
-
-  override def getKeys(): util.Collection[String] = {
-    // return all property keys.
-  }
-}
-```
-{{< /tab >}}
-{{< /tabs >}}
 
 Create a file with name `org.apache.flink.api.common.externalresource.ExternalResourceDriverFactory` in `META-INF/services/`
 and write the factory class name (e.g. `your.domain.FPGADriverFactory`) to it.
@@ -254,7 +203,7 @@ We provide a first-party plugin for GPU resources. The plugin leverages a discov
 be accessed from the resource *information* via the property "index". We provide a default discovery script that can be used to discover
 NVIDIA GPUs. You can also provide your custom script.
 
-We provide [an example](https://github.com/apache/flink/blob/{{ site.github_branch }}/flink-examples/flink-examples-streaming/src/main/java/org/apache/flink/streaming/examples/gpu/MatrixVectorMul.java)
+We provide {{< gh_link file="/flink-examples/flink-examples-streaming/src/main/java/org/apache/flink/streaming/examples/gpu/MatrixVectorMul.java" name="an example" >}}
 which shows how to use the GPUs to do matrix-vector multiplication in Flink.
 
 {{< hint info >}}
@@ -302,12 +251,7 @@ For the GPU plugin, you need to specify the common external resource configurati
 
 In addition, there are some specific configurations for the GPU plugin:
 
-  - `external-resource.<resource_name>.param.discovery-script.path`: The path of the [discovery script](#discovery-script). It
-  can either be an absolute path, or a relative path to `FLINK_HOME` when defined or current directory otherwise. If not
-  explicitly configured, the default script will be used.
-
-  - `external-resource.<resource_name>.param.discovery-script.args`: The arguments passed to the discovery script. For the default
-  discovery script, see [Default Script](#default-script) for the available parameters.
+{{< generated/gpu_driver_configuration >}}
 
 An example configuration for GPU resource:
 

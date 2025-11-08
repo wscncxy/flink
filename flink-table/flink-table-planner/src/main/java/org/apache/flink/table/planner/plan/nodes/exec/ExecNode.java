@@ -20,37 +20,45 @@ package org.apache.flink.table.planner.plan.nodes.exec;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.planner.plan.nodes.exec.serde.LogicalTypeJsonDeserializer;
-import org.apache.flink.table.planner.plan.nodes.exec.serde.LogicalTypeJsonSerializer;
 import org.apache.flink.table.planner.plan.nodes.exec.visitor.ExecNodeVisitor;
 import org.apache.flink.table.planner.plan.nodes.physical.FlinkPhysicalRel;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonInclude;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonTypeInfo;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonTypeIdResolver;
 
 import java.util.List;
+
+import static org.apache.flink.table.planner.plan.nodes.exec.ExecNode.FIELD_NAME_TYPE;
 
 /**
  * The representation of execution information for a {@link FlinkPhysicalRel}.
  *
  * @param <T> The type of the elements that result from this node.
  */
-@JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, include = JsonTypeInfo.As.PROPERTY, property = "class")
+@JsonTypeInfo(
+        use = JsonTypeInfo.Id.NAME,
+        include = JsonTypeInfo.As.EXISTING_PROPERTY,
+        property = FIELD_NAME_TYPE,
+        visible = true)
+@JsonTypeIdResolver(ExecNodeTypeIdResolver.class)
 @Internal
-public interface ExecNode<T> extends ExecNodeTranslator<T> {
+public interface ExecNode<T> extends ExecNodeTranslator<T>, FusionCodegenExecNode {
 
     String FIELD_NAME_ID = "id";
+    String FIELD_NAME_TYPE = "type";
+    String FIELD_NAME_CONFIGURATION = "configuration";
     String FIELD_NAME_DESCRIPTION = "description";
     String FIELD_NAME_INPUT_PROPERTIES = "inputProperties";
     String FIELD_NAME_OUTPUT_TYPE = "outputType";
+    String FIELD_NAME_STATE = "state";
 
-    /** Gets the ID of this node. */
-    @JsonProperty(value = FIELD_NAME_ID)
+    /** The unique ID of the node. */
+    @JsonProperty(value = FIELD_NAME_ID, index = 0)
     int getId();
 
     /** Returns a string which describes this node. */
@@ -66,8 +74,6 @@ public interface ExecNode<T> extends ExecNodeTranslator<T> {
      * data structures.
      */
     @JsonProperty(value = FIELD_NAME_OUTPUT_TYPE)
-    @JsonSerialize(using = LogicalTypeJsonSerializer.class)
-    @JsonDeserialize(using = LogicalTypeJsonDeserializer.class)
     LogicalType getOutputType();
 
     /**
@@ -77,6 +83,7 @@ public interface ExecNode<T> extends ExecNodeTranslator<T> {
      *
      * @return List of this node's input properties.
      */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     @JsonProperty(value = FIELD_NAME_INPUT_PROPERTIES)
     List<InputProperty> getInputProperties();
 
@@ -89,7 +96,7 @@ public interface ExecNode<T> extends ExecNodeTranslator<T> {
     List<ExecEdge> getInputEdges();
 
     /**
-     * Sets the input {@link ExecEdge}s which connect this nodes and its input nodes.
+     * Sets the input {@link ExecEdge}s which connect these nodes and its input nodes.
      *
      * <p>NOTE: If there are no inputs, the given inputEdges should be empty, not null.
      *
@@ -112,4 +119,10 @@ public interface ExecNode<T> extends ExecNodeTranslator<T> {
      * @param visitor ExecNodeVisitor.
      */
     void accept(ExecNodeVisitor visitor);
+
+    /**
+     * Declares whether the node has been created as part of a plan compilation. Some translation
+     * properties might be impacted by this (e.g. UID generation for transformations).
+     */
+    void setCompiled(boolean isCompiled);
 }

@@ -19,8 +19,6 @@
 package org.apache.flink.test.misc;
 
 import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.java.ExecutionEnvironment;
-import org.apache.flink.api.java.io.DiscardingOutputFormat;
 import org.apache.flink.client.program.ProgramInvocationException;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.MemorySize;
@@ -29,6 +27,8 @@ import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.runtime.client.JobExecutionException;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Value;
 import org.apache.flink.util.TestLogger;
@@ -37,11 +37,9 @@ import org.junit.ClassRule;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.util.Optional;
 
 import static org.apache.flink.util.ExceptionUtils.findThrowable;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 /**
  * Test for proper error messages in case user-defined serialization is broken and detected in the
@@ -68,12 +66,12 @@ public class CustomSerializationITCase extends TestLogger {
     }
 
     @Test
-    public void testIncorrectSerializer1() {
+    public void testIncorrectSerializer1() throws Exception {
         try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
             env.setParallelism(PARLLELISM);
 
-            env.generateSequence(1, 10 * PARLLELISM)
+            env.fromSequence(1, 10 * PARLLELISM)
                     .map(
                             new MapFunction<Long, ConsumesTooMuch>() {
                                 @Override
@@ -82,26 +80,28 @@ public class CustomSerializationITCase extends TestLogger {
                                 }
                             })
                     .rebalance()
-                    .output(new DiscardingOutputFormat<ConsumesTooMuch>());
+                    .sinkTo(new DiscardingSink<>());
 
             env.execute();
         } catch (JobExecutionException e) {
-            Optional<IOException> rootCause = findThrowable(e, IOException.class);
-            assertTrue(rootCause.isPresent());
-            assertTrue(rootCause.get().getMessage().contains("broken serialization"));
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
+            assertTrue(
+                    findThrowable(
+                                    e,
+                                    candidate ->
+                                            candidate
+                                                    .getMessage()
+                                                    .contains("broken serialization."))
+                            .isPresent());
         }
     }
 
     @Test
-    public void testIncorrectSerializer2() {
+    public void testIncorrectSerializer2() throws Exception {
         try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
             env.setParallelism(PARLLELISM);
 
-            env.generateSequence(1, 10 * PARLLELISM)
+            env.fromSequence(1, 10 * PARLLELISM)
                     .map(
                             new MapFunction<Long, ConsumesTooMuchSpanning>() {
                                 @Override
@@ -110,26 +110,28 @@ public class CustomSerializationITCase extends TestLogger {
                                 }
                             })
                     .rebalance()
-                    .output(new DiscardingOutputFormat<ConsumesTooMuchSpanning>());
+                    .sinkTo(new DiscardingSink<>());
 
             env.execute();
         } catch (JobExecutionException e) {
-            Optional<IOException> rootCause = findThrowable(e, IOException.class);
-            assertTrue(rootCause.isPresent());
-            assertTrue(rootCause.get().getMessage().contains("broken serialization"));
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
+            assertTrue(
+                    findThrowable(
+                                    e,
+                                    candidate ->
+                                            candidate
+                                                    .getMessage()
+                                                    .contains("broken serialization."))
+                            .isPresent());
         }
     }
 
     @Test
-    public void testIncorrectSerializer3() {
+    public void testIncorrectSerializer3() throws Exception {
         try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
             env.setParallelism(PARLLELISM);
 
-            env.generateSequence(1, 10 * PARLLELISM)
+            env.fromSequence(1, 10 * PARLLELISM)
                     .map(
                             new MapFunction<Long, ConsumesTooLittle>() {
                                 @Override
@@ -138,26 +140,28 @@ public class CustomSerializationITCase extends TestLogger {
                                 }
                             })
                     .rebalance()
-                    .output(new DiscardingOutputFormat<ConsumesTooLittle>());
+                    .sinkTo(new DiscardingSink<>());
 
             env.execute();
         } catch (JobExecutionException e) {
-            Optional<IOException> rootCause = findThrowable(e, IOException.class);
-            assertTrue(rootCause.isPresent());
-            assertTrue(rootCause.get().getMessage().contains("broken serialization"));
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
+            assertTrue(
+                    findThrowable(
+                                    e,
+                                    candidate ->
+                                            candidate
+                                                    .getMessage()
+                                                    .contains("broken serialization."))
+                            .isPresent());
         }
     }
 
     @Test
-    public void testIncorrectSerializer4() {
+    public void testIncorrectSerializer4() throws Exception {
         try {
-            ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
             env.setParallelism(PARLLELISM);
 
-            env.generateSequence(1, 10 * PARLLELISM)
+            env.fromSequence(1, 10 * PARLLELISM)
                     .map(
                             new MapFunction<Long, ConsumesTooLittleSpanning>() {
                                 @Override
@@ -166,16 +170,18 @@ public class CustomSerializationITCase extends TestLogger {
                                 }
                             })
                     .rebalance()
-                    .output(new DiscardingOutputFormat<ConsumesTooLittleSpanning>());
+                    .sinkTo(new DiscardingSink<>());
 
             env.execute();
         } catch (ProgramInvocationException e) {
-            Throwable rootCause = e.getCause().getCause();
-            assertTrue(rootCause instanceof IOException);
-            assertTrue(rootCause.getMessage().contains("broken serialization"));
-        } catch (Exception e) {
-            e.printStackTrace();
-            fail(e.getMessage());
+            assertTrue(
+                    findThrowable(
+                                    e,
+                                    candidate ->
+                                            candidate
+                                                    .getMessage()
+                                                    .contains("broken serialization."))
+                            .isPresent());
         }
     }
 

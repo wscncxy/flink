@@ -22,20 +22,24 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.RowDataUtil;
 import org.apache.flink.table.runtime.generated.GeneratedJoinCondition;
-import org.apache.flink.table.runtime.operators.join.stream.state.JoinInputSideSpec;
 import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateView;
 import org.apache.flink.table.runtime.operators.join.stream.state.JoinRecordStateViews;
 import org.apache.flink.table.runtime.operators.join.stream.state.OuterJoinRecordStateView;
 import org.apache.flink.table.runtime.operators.join.stream.state.OuterJoinRecordStateViews;
+import org.apache.flink.table.runtime.operators.join.stream.utils.JoinInputSideSpec;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.types.RowKind;
+
+import org.apache.flink.shaded.guava33.com.google.common.collect.Iterators;
+
+import java.util.Iterator;
 
 /** Streaming unbounded Join operator which supports SEMI/ANTI JOIN. */
 public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator {
 
     private static final long serialVersionUID = -3135772379944924519L;
 
-    // true if it is anti join, otherwise is semi joinp
+    // true if it is anti join, otherwise is semi join
     private final boolean isAntiJoin;
 
     // left join state
@@ -51,7 +55,8 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
             JoinInputSideSpec leftInputSideSpec,
             JoinInputSideSpec rightInputSideSpec,
             boolean[] filterNullKeys,
-            long stateRetentionTime) {
+            long leftStateRetentionTime,
+            long rightStateRetentionTIme) {
         super(
                 leftType,
                 rightType,
@@ -59,7 +64,8 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
                 leftInputSideSpec,
                 rightInputSideSpec,
                 filterNullKeys,
-                stateRetentionTime);
+                leftStateRetentionTime,
+                rightStateRetentionTIme);
         this.isAntiJoin = isAntiJoin;
     }
 
@@ -73,7 +79,7 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
                         LEFT_RECORDS_STATE_NAME,
                         leftInputSideSpec,
                         leftType,
-                        stateRetentionTime);
+                        leftStateRetentionTime);
 
         this.rightRecordStateView =
                 JoinRecordStateViews.create(
@@ -81,7 +87,7 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
                         RIGHT_RECORDS_STATE_NAME,
                         rightInputSideSpec,
                         rightType,
-                        stateRetentionTime);
+                        rightStateRetentionTime);
     }
 
     /**
@@ -102,9 +108,10 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
     @Override
     public void processElement1(StreamRecord<RowData> element) throws Exception {
         RowData input = element.getValue();
-        AssociatedRecords associatedRecords =
-                AssociatedRecords.of(input, true, rightRecordStateView, joinCondition);
-        if (associatedRecords.isEmpty()) {
+        Iterator<OuterRecord> associatedRecords =
+                AbstractStreamingJoinOperator.iterator(
+                        input, true, rightRecordStateView, joinCondition);
+        if (!associatedRecords.hasNext()) {
             if (isAntiJoin) {
                 collector.collect(input);
             }
@@ -116,7 +123,7 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
         if (RowDataUtil.isAccumulateMsg(input)) {
             // erase RowKind for state updating
             input.setRowKind(RowKind.INSERT);
-            leftRecordStateView.addRecord(input, associatedRecords.size());
+            leftRecordStateView.addRecord(input, Iterators.size(associatedRecords));
         } else { // input is retract
             // erase RowKind for state updating
             input.setRowKind(RowKind.INSERT);
@@ -166,52 +173,49 @@ public class StreamingSemiAntiJoinOperator extends AbstractStreamingJoinOperator
         RowKind inputRowKind = input.getRowKind();
         input.setRowKind(RowKind.INSERT); // erase RowKind for later state updating
 
-        AssociatedRecords associatedRecords =
-                AssociatedRecords.of(input, false, leftRecordStateView, joinCondition);
+        Iterator<OuterRecord> associatedRecords =
+                AbstractStreamingJoinOperator.iterator(
+                        input, false, leftRecordStateView, joinCondition);
         if (isAccumulateMsg) { // record is accumulate
             rightRecordStateView.addRecord(input);
-            if (!associatedRecords.isEmpty()) {
-                // there are matched rows on the other side
-                for (OuterRecord outerRecord : associatedRecords.getOuterRecords()) {
-                    RowData other = outerRecord.record;
-                    if (outerRecord.numOfAssociations == 0) {
-                        if (isAntiJoin) {
-                            // send -D[other]
-                            other.setRowKind(RowKind.DELETE);
-                        } else {
-                            // send +I/+U[other] (using input RowKind)
-                            other.setRowKind(inputRowKind);
-                        }
-                        collector.collect(other);
-                        // set header back to INSERT, because we will update the other row to state
-                        other.setRowKind(RowKind.INSERT);
-                    } // ignore when number > 0
-                    leftRecordStateView.updateNumOfAssociations(
-                            other, outerRecord.numOfAssociations + 1);
-                }
-            } // ignore when associated number == 0
+            while (associatedRecords.hasNext()) {
+                OuterRecord outerRecord = associatedRecords.next();
+                RowData other = outerRecord.record;
+                if (outerRecord.numOfAssociations == 0) {
+                    if (isAntiJoin) {
+                        // send -D[other]
+                        other.setRowKind(RowKind.DELETE);
+                    } else {
+                        // send +I/+U[other] (using input RowKind)
+                        other.setRowKind(inputRowKind);
+                    }
+                    collector.collect(other);
+                    // set header back to INSERT, because we will update the other row to state
+                    other.setRowKind(RowKind.INSERT);
+                } // ignore when number > 0
+                leftRecordStateView.updateNumOfAssociations(
+                        other, outerRecord.numOfAssociations + 1);
+            }
         } else { // retract input
             rightRecordStateView.retractRecord(input);
-            if (!associatedRecords.isEmpty()) {
-                // there are matched rows on the other side
-                for (OuterRecord outerRecord : associatedRecords.getOuterRecords()) {
-                    RowData other = outerRecord.record;
-                    if (outerRecord.numOfAssociations == 1) {
-                        if (!isAntiJoin) {
-                            // send -D/-U[other] (using input RowKind)
-                            other.setRowKind(inputRowKind);
-                        } else {
-                            // send +I[other]
-                            other.setRowKind(RowKind.INSERT);
-                        }
-                        collector.collect(other);
-                        // set RowKind back, because we will update the other row to state
+            while (associatedRecords.hasNext()) {
+                OuterRecord outerRecord = associatedRecords.next();
+                RowData other = outerRecord.record;
+                if (outerRecord.numOfAssociations == 1) {
+                    if (!isAntiJoin) {
+                        // send -D/-U[other] (using input RowKind)
+                        other.setRowKind(inputRowKind);
+                    } else {
+                        // send +I[other]
                         other.setRowKind(RowKind.INSERT);
-                    } // ignore when number > 0
-                    leftRecordStateView.updateNumOfAssociations(
-                            other, outerRecord.numOfAssociations - 1);
-                }
-            } // ignore when associated number == 0
+                    }
+                    collector.collect(other);
+                    // set RowKind back, because we will update the other row to state
+                    other.setRowKind(RowKind.INSERT);
+                } // ignore when number > 0
+                leftRecordStateView.updateNumOfAssociations(
+                        other, outerRecord.numOfAssociations - 1);
+            }
         }
     }
 }

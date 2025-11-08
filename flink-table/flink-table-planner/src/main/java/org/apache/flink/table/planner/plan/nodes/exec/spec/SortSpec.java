@@ -24,6 +24,7 @@ import org.apache.flink.util.Preconditions;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Arrays;
@@ -36,6 +37,7 @@ import java.util.stream.Stream;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /** {@link SortSpec} describes how the data will be sorted. */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SortSpec {
 
     public static final String FIELD_NAME_FIELDS = "fields";
@@ -128,6 +130,7 @@ public class SortSpec {
     }
 
     /** Sort info for a Field. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class SortFieldSpec {
         public static final String FIELD_NAME_INDEX = "index";
         public static final String FIELD_NAME_IS_ASCENDING = "isAscending";
@@ -136,9 +139,11 @@ public class SortSpec {
         /** 0-based index of field being sorted. */
         @JsonProperty(FIELD_NAME_INDEX)
         private final int fieldIndex;
+
         /** in ascending order or not. */
         @JsonProperty(FIELD_NAME_IS_ASCENDING)
         private final boolean isAscendingOrder;
+
         /** put null at last or not. */
         @JsonProperty(FIELD_NAME_NULL_IS_LAST)
         private final boolean nullIsLast;

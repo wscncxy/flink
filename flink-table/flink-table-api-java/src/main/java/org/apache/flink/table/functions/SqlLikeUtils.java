@@ -17,6 +17,9 @@
 
 package org.apache.flink.table.functions;
 
+import org.apache.flink.annotation.Internal;
+
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -24,8 +27,9 @@ import java.util.regex.Pattern;
  *
  * <p>Note: THIS IS COPIED FROM CALCITE to EXPOSE SOME PRIVATE METHOD
  */
+@Internal
 public class SqlLikeUtils {
-    private static final String JAVA_REGEX_SPECIALS = "[]()|^-+*?{}$\\";
+    private static final String JAVA_REGEX_SPECIALS = "[]()|^-+*?{}$\\.";
     private static final String SQL_SIMILAR_SPECIALS = "[]()|^-+*_%?{}";
     private static final String[] REG_CHAR_CLASSES = {
         "[:ALPHA:]", "\\p{Alpha}",
@@ -46,9 +50,40 @@ public class SqlLikeUtils {
 
     private SqlLikeUtils() {}
 
-    /** SQL like function with escape. */
+    /** SQL {@code LIKE} function. */
+    public static boolean like(String s, String pattern) {
+        final String regex = sqlToRegexLike(pattern, null);
+        return Pattern.matches(regex, s);
+    }
+
+    /** SQL {@code LIKE} function with escape. */
     public static boolean like(String s, String pattern, String escape) {
         final String regex = sqlToRegexLike(pattern, escape);
+        return Pattern.matches(regex, s);
+    }
+
+    /** SQL {@code ILIKE} function. */
+    public static boolean ilike(String s, String patternStr) {
+        return ilike(s, patternStr, null);
+    }
+
+    /** SQL {@code ILIKE} function with escape. */
+    public static boolean ilike(String s, String patternStr, String escape) {
+        final String regex = sqlToRegexLike(patternStr, escape);
+        Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(s);
+        return matcher.matches();
+    }
+
+    /** SQL {@code SIMILAR} function. */
+    public static boolean similar(String s, String pattern) {
+        final String regex = sqlToRegexSimilar(pattern, null);
+        return Pattern.matches(regex, s);
+    }
+
+    /** SQL {@code SIMILAR} function with escape. */
+    public static boolean similar(String s, String pattern, String escape) {
+        final String regex = sqlToRegexSimilar(pattern, escape);
         return Pattern.matches(regex, s);
     }
 
@@ -61,7 +96,7 @@ public class SqlLikeUtils {
             }
             escapeChar = escapeStr.charAt(0);
         } else {
-            escapeChar = 0;
+            escapeChar = '\\';
         }
         return sqlToRegexLike(sqlPattern, escapeChar);
     }
@@ -73,15 +108,18 @@ public class SqlLikeUtils {
         final StringBuilder javaPattern = new StringBuilder(len + len);
         for (i = 0; i < len; i++) {
             char c = sqlPattern.charAt(i);
-            if (JAVA_REGEX_SPECIALS.indexOf(c) >= 0) {
-                javaPattern.append('\\');
-            }
             if (c == escapeChar) {
                 if (i == (sqlPattern.length() - 1)) {
                     throw invalidEscapeSequence(sqlPattern, i);
                 }
                 char nextChar = sqlPattern.charAt(i + 1);
-                if ((nextChar == '_') || (nextChar == '%') || (nextChar == escapeChar)) {
+                if ((nextChar == '_') || (nextChar == '%')) {
+                    javaPattern.append(nextChar);
+                    i++;
+                } else if (nextChar == escapeChar) {
+                    if (JAVA_REGEX_SPECIALS.indexOf(nextChar) >= 0) {
+                        javaPattern.append('\\');
+                    }
                     javaPattern.append(nextChar);
                     i++;
                 } else {
@@ -92,6 +130,9 @@ public class SqlLikeUtils {
             } else if (c == '%') {
                 javaPattern.append("(?s:.*)");
             } else {
+                if (JAVA_REGEX_SPECIALS.indexOf(c) >= 0) {
+                    javaPattern.append('\\');
+                }
                 javaPattern.append(c);
             }
         }
@@ -111,7 +152,7 @@ public class SqlLikeUtils {
             return;
         }
         if (SQL_SIMILAR_SPECIALS.indexOf(escapeChar) >= 0) {
-            // The the escape character is a special character
+            // The escape character is a special character
             // SQL 2003 Part 2 Section 8.6 General Rule 3.b
             for (int i = 0; i < sqlPattern.length(); i++) {
                 if (sqlPattern.charAt(i) == escapeChar) {
@@ -192,7 +233,7 @@ public class SqlLikeUtils {
     }
 
     /** Translates a SQL SIMILAR pattern to Java regex pattern, with optional escape string. */
-    static String sqlToRegexSimilar(String sqlPattern, CharSequence escapeStr) {
+    public static String sqlToRegexSimilar(String sqlPattern, CharSequence escapeStr) {
         final char escapeChar;
         if (escapeStr != null) {
             if (escapeStr.length() != 1) {
@@ -206,7 +247,7 @@ public class SqlLikeUtils {
     }
 
     /** Translates SQL SIMILAR pattern to Java regex pattern. */
-    static String sqlToRegexSimilar(String sqlPattern, char escapeChar) {
+    public static String sqlToRegexSimilar(String sqlPattern, char escapeChar) {
         similarEscapeRuleChecking(sqlPattern, escapeChar);
 
         boolean insideCharacterEnumeration = false;

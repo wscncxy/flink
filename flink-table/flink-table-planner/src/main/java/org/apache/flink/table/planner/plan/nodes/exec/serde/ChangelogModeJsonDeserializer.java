@@ -18,37 +18,47 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.serde;
 
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.types.RowKind;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
 import java.io.IOException;
+import java.util.Objects;
 
 /**
- * JSON deserializer for {@link ChangelogMode}. refer to {@link ChangelogModeJsonSerializer} for
- * serializer.
+ * JSON deserializer for {@link ChangelogMode}.
+ *
+ * @see ChangelogModeJsonSerializer for the reverse operation
  */
-public class ChangelogModeJsonDeserializer extends StdDeserializer<ChangelogMode> {
+@Internal
+final class ChangelogModeJsonDeserializer extends StdDeserializer<ChangelogMode> {
     private static final long serialVersionUID = 1L;
+    private static final String PARTIAL_DELETE = "~" + RowKind.DELETE.name();
 
-    public ChangelogModeJsonDeserializer() {
+    ChangelogModeJsonDeserializer() {
         super(ChangelogMode.class);
     }
 
     @Override
     public ChangelogMode deserialize(
             JsonParser jsonParser, DeserializationContext deserializationContext)
-            throws IOException, JsonProcessingException {
+            throws IOException {
         ChangelogMode.Builder builder = ChangelogMode.newBuilder();
         JsonNode rowKindsNode = jsonParser.readValueAsTree();
         for (JsonNode rowKindNode : rowKindsNode) {
-            RowKind rowKind = RowKind.valueOf(rowKindNode.asText().toUpperCase());
-            builder.addContainedKind(rowKind);
+            final String rowKindText = rowKindNode.asText();
+            if (Objects.equals(PARTIAL_DELETE, rowKindText)) {
+                builder.keyOnlyDeletes(true);
+                builder.addContainedKind(RowKind.DELETE);
+            } else {
+                RowKind rowKind = RowKind.valueOf(rowKindText);
+                builder.addContainedKind(rowKind);
+            }
         }
         return builder.build();
     }

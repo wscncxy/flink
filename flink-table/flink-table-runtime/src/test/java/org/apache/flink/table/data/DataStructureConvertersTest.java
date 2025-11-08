@@ -28,15 +28,11 @@ import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.utils.DataTypeFactoryMock;
 import org.apache.flink.types.Row;
 import org.apache.flink.types.RowKind;
+import org.apache.flink.types.variant.Variant;
 import org.apache.flink.util.InstantiationUtil;
 
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameter;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import javax.annotation.Nullable;
 
@@ -87,15 +83,13 @@ import static org.apache.flink.table.api.DataTypes.TIMESTAMP_WITH_TIME_ZONE;
 import static org.apache.flink.table.api.DataTypes.VARBINARY;
 import static org.apache.flink.table.api.DataTypes.VARCHAR;
 import static org.apache.flink.table.api.DataTypes.YEAR;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.junit.Assert.assertArrayEquals;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link DataStructureConverters}. */
-@RunWith(Parameterized.class)
-public class DataStructureConvertersTest {
+class DataStructureConvertersTest {
 
-    @Parameters(name = "{index}: {0}")
-    public static List<TestSpec> testData() {
+    static List<TestSpec> testData() {
         // ordered by definition in DataStructureConverters
         return asList(
                 TestSpec.forDataType(CHAR(5))
@@ -362,43 +356,105 @@ public class DataStructureConvertersTest {
                 TestSpec.forDataType(
                                 DataTypes.STRUCTURED(GenericPojo.class, FIELD("value", DATE())))
                         .convertedTo(
-                                GenericPojo.class, new GenericPojo<>(LocalDate.ofEpochDay(123))));
+                                GenericPojo.class, new GenericPojo<>(LocalDate.ofEpochDay(123))),
+                TestSpec.forDataType(DataTypes.VARIANT())
+                        .convertedTo(Variant.class, Variant.newBuilder().of("hello")),
+
+                // partial delete messages
+                TestSpec.forDataType(
+                                DataTypes.ROW(
+                                        DataTypes.FIELD("f0", DataTypes.TINYINT().notNull()),
+                                        DataTypes.FIELD("f1", DataTypes.SMALLINT().notNull()),
+                                        DataTypes.FIELD("f2", DataTypes.INT().notNull()),
+                                        DataTypes.FIELD("f3", DataTypes.BIGINT().notNull()),
+                                        DataTypes.FIELD("f4", DataTypes.DOUBLE().notNull()),
+                                        DataTypes.FIELD("f5", DataTypes.FLOAT().notNull()),
+                                        DataTypes.FIELD("f6", DataTypes.DATE().notNull()),
+                                        DataTypes.FIELD("f7", DataTypes.BINARY(12).notNull()),
+                                        DataTypes.FIELD("f8", DataTypes.VARBINARY(12).notNull()),
+                                        DataTypes.FIELD("f9", DataTypes.CHAR(12).notNull()),
+                                        DataTypes.FIELD("f10", DataTypes.VARCHAR(12).notNull()),
+                                        DataTypes.FIELD("f11", DataTypes.BOOLEAN().notNull()),
+                                        DataTypes.FIELD("f12", DataTypes.TIME().notNull()),
+                                        DataTypes.FIELD("f13", DataTypes.TIMESTAMP().notNull()),
+                                        DataTypes.FIELD("f14", DataTypes.TIMESTAMP_LTZ().notNull()),
+                                        DataTypes.FIELD("f15", DataTypes.DECIMAL(10, 2).notNull()),
+                                        DataTypes.FIELD(
+                                                "f16",
+                                                DataTypes.MAP(
+                                                                DataTypes.INT().notNull(),
+                                                                DataTypes.STRING().notNull())
+                                                        .notNull()),
+                                        DataTypes.FIELD(
+                                                "f17",
+                                                DataTypes.ARRAY(DataTypes.INT().notNull())
+                                                        .notNull()),
+                                        DataTypes.FIELD(
+                                                "f18",
+                                                DataTypes.ARRAY(DataTypes.INT().notNull())
+                                                        .notNull()),
+                                        DataTypes.FIELD(
+                                                "f19",
+                                                DataTypes.MULTISET(DataTypes.INT().notNull())
+                                                        .notNull())))
+                        .convertedTo(
+                                Row.class,
+                                Row.ofKind(
+                                        RowKind.DELETE,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        new Integer[] {null, null},
+                                        null)));
     }
 
-    @Parameter public TestSpec testSpec;
-
-    @Rule public ExpectedException thrown = ExpectedException.none();
-
-    @Test
-    public void testConversions() {
-        if (testSpec.expectedErrorMessage != null) {
-            thrown.expect(TableException.class);
-            thrown.expectMessage(equalTo(testSpec.expectedErrorMessage));
-        }
+    @ParameterizedTest(name = "{index}: {0}")
+    @MethodSource("testData")
+    void testConversions(final TestSpec testSpec) {
         for (Map.Entry<Class<?>, Object> from : testSpec.conversions.entrySet()) {
             final DataType fromDataType = testSpec.dataType.bridgedTo(from.getKey());
 
-            final DataStructureConverter<Object, Object> fromConverter =
-                    simulateSerialization(DataStructureConverters.getConverter(fromDataType));
-            fromConverter.open(DataStructureConvertersTest.class.getClassLoader());
+            if (testSpec.expectedErrorMessage != null) {
+                assertThatThrownBy(() -> DataStructureConverters.getConverter(fromDataType))
+                        .isInstanceOf(TableException.class)
+                        .hasMessage(testSpec.expectedErrorMessage);
+            } else {
+                final DataStructureConverter<Object, Object> fromConverter =
+                        simulateSerialization(DataStructureConverters.getConverter(fromDataType));
+                fromConverter.open(DataStructureConvertersTest.class.getClassLoader());
 
-            final Object internalValue = fromConverter.toInternalOrNull(from.getValue());
+                final Object internalValue = fromConverter.toInternalOrNull(from.getValue());
 
-            final Object anotherValue = testSpec.conversionsWithAnotherValue.get(from.getKey());
-            if (anotherValue != null) {
-                fromConverter.toInternalOrNull(anotherValue);
-            }
+                final Object anotherValue = testSpec.conversionsWithAnotherValue.get(from.getKey());
+                if (anotherValue != null) {
+                    fromConverter.toInternalOrNull(anotherValue);
+                }
 
-            for (Map.Entry<Class<?>, Object> to : testSpec.conversions.entrySet()) {
-                final DataType toDataType = testSpec.dataType.bridgedTo(to.getKey());
+                for (Map.Entry<Class<?>, Object> to : testSpec.conversions.entrySet()) {
+                    final DataType toDataType = testSpec.dataType.bridgedTo(to.getKey());
 
-                final DataStructureConverter<Object, Object> toConverter =
-                        simulateSerialization(DataStructureConverters.getConverter(toDataType));
-                toConverter.open(DataStructureConvertersTest.class.getClassLoader());
+                    final DataStructureConverter<Object, Object> toConverter =
+                            simulateSerialization(DataStructureConverters.getConverter(toDataType));
+                    toConverter.open(DataStructureConvertersTest.class.getClassLoader());
 
-                assertArrayEquals(
-                        new Object[] {to.getValue()},
-                        new Object[] {toConverter.toExternalOrNull(internalValue)});
+                    assertThat(toConverter.toExternalOrNull(internalValue))
+                            .isEqualTo(to.getValue());
+                }
             }
         }
     }

@@ -18,8 +18,12 @@
 
 package org.apache.flink.table.runtime.operators.deduplicate;
 
-import org.apache.flink.api.common.time.Time;
+import org.apache.flink.api.common.functions.IterationRuntimeContext;
+import org.apache.flink.api.common.functions.OpenContext;
+import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.runtime.generated.FilterCondition;
+import org.apache.flink.table.runtime.generated.GeneratedFilterCondition;
 import org.apache.flink.table.runtime.generated.GeneratedRecordEqualiser;
 import org.apache.flink.table.runtime.generated.RecordEqualiser;
 import org.apache.flink.table.runtime.keyselector.RowDataKeySelector;
@@ -32,13 +36,14 @@ import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.utils.HandwrittenSelectorUtil;
 
+import java.time.Duration;
+
 /** Base class of tests for all kinds of processing-time DeduplicateFunction. */
 abstract class ProcTimeDeduplicateFunctionTestBase {
 
-    Time minTime = Time.milliseconds(10);
+    Duration minTime = Duration.ofMillis(10);
     InternalTypeInfo<RowData> inputRowType =
-            InternalTypeInfo.ofFields(
-                    new VarCharType(VarCharType.MAX_LENGTH), new BigIntType(), new IntType());
+            InternalTypeInfo.ofFields(VarCharType.STRING_TYPE, new BigIntType(), new IntType());
 
     int rowKeyIdx = 1;
     RowDataKeySelector rowKeySelector =
@@ -61,4 +66,38 @@ abstract class ProcTimeDeduplicateFunctionTestBase {
                     return new RowDataRecordEqualiser();
                 }
             };
+
+    static GeneratedFilterCondition generatedFilterCondition =
+            new GeneratedFilterCondition("", "", new Object[0]) {
+                @Override
+                public FilterCondition newInstance(ClassLoader classLoader) {
+                    return new TestingFilter();
+                }
+            };
+
+    private static class TestingFilter implements FilterCondition {
+        @Override
+        public boolean apply(Context ctx, RowData input) {
+            return input.getInt(2) > 10;
+        }
+
+        @Override
+        public void open(OpenContext openContext) throws Exception {}
+
+        @Override
+        public void close() throws Exception {}
+
+        @Override
+        public RuntimeContext getRuntimeContext() {
+            return null;
+        }
+
+        @Override
+        public IterationRuntimeContext getIterationRuntimeContext() {
+            return null;
+        }
+
+        @Override
+        public void setRuntimeContext(RuntimeContext t) {}
+    }
 }

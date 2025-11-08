@@ -28,12 +28,19 @@
       {{ logName }}
     </nz-breadcrumb-item>
   </nz-breadcrumb>
-  <flink-refresh-download
+  <flink-addon-inline
     [isLoading]="isLoading"
     [downloadHref]="downloadUrl"
     [downloadName]="logName"
     (reload)="reload()"
     (fullScreen)="toggleFullScreen($event)"
-  ></flink-refresh-download>
+  ></flink-addon-inline>
 </div>
-<flink-monaco-editor [value]="logs"></flink-monaco-editor>
+<div class="editor-container">
+  <nz-code-editor
+    flinkAutoResize
+    [nzLoading]="isLoading"
+    [ngModel]="logs"
+    [nzEditorOption]="editorOptions"
+  ></nz-code-editor>
+</div>

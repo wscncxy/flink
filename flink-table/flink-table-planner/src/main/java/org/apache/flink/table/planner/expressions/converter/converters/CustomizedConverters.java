@@ -35,6 +35,7 @@ public class CustomizedConverters {
 
     static {
         CONVERTERS.put(BuiltInFunctionDefinitions.CAST, new CastConverter());
+        CONVERTERS.put(BuiltInFunctionDefinitions.TRY_CAST, new TryCastConverter());
         CONVERTERS.put(BuiltInFunctionDefinitions.REINTERPRET_CAST, new ReinterpretCastConverter());
         CONVERTERS.put(BuiltInFunctionDefinitions.IN, new InConverter());
         CONVERTERS.put(BuiltInFunctionDefinitions.GET, new GetConverter());
@@ -58,6 +59,7 @@ public class CustomizedConverters {
         CONVERTERS.put(BuiltInFunctionDefinitions.JSON_QUERY, new JsonQueryConverter());
         CONVERTERS.put(BuiltInFunctionDefinitions.JSON_OBJECT, new JsonObjectConverter());
         CONVERTERS.put(BuiltInFunctionDefinitions.JSON_ARRAY, new JsonArrayConverter());
+        CONVERTERS.put(BuiltInFunctionDefinitions.DEFAULT, new DefaultConverter());
         CONVERTERS.put(InternalFunctionDefinitions.THROW_EXCEPTION, new ThrowExceptionConverter());
     }
 

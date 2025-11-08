@@ -20,6 +20,7 @@ package org.apache.flink.runtime.io.network.partition.consumer;
 import org.apache.flink.runtime.checkpoint.CheckpointException;
 import org.apache.flink.runtime.checkpoint.channel.InputChannelInfo;
 import org.apache.flink.runtime.io.network.api.CheckpointBarrier;
+import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 
 import java.io.IOException;
 import java.util.List;
@@ -65,7 +66,12 @@ public abstract class IndexedInputGate extends InputGate implements Checkpointab
         getChannel(channelIndex).convertToPriorityEvent(sequenceNumber);
     }
 
-    public abstract int getBuffersInUseCount();
+    /**
+     * Returns the type of this input channel's consumed result partition.
+     *
+     * @return consumed result partition type
+     */
+    public abstract ResultPartitionType getConsumedPartitionType();
 
-    public abstract void announceBufferSize(int bufferSize);
+    public abstract void triggerDebloating();
 }

@@ -17,73 +17,60 @@
  */
 
 import { HttpClient } from '@angular/common/http';
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
-import { EMPTY, fromEvent, interval, merge, Subject } from 'rxjs';
-import { debounceTime, filter, map, mapTo, share, startWith, switchMap, tap } from 'rxjs/operators';
+import { EMPTY, fromEvent, interval, merge, Observable, Subject } from 'rxjs';
+import { debounceTime, filter, map, share, startWith, switchMap, tap } from 'rxjs/operators';
 
-import { BASE_URL } from 'config';
-import { ConfigurationInterface } from 'interfaces';
+import { Configuration } from '@flink-runtime-web/interfaces';
+
+import { ConfigService } from './config.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class StatusService {
-  /**
-   * Error server response message cache list
-   */
-  listOfErrorMessage: string[] = [];
-  /**
-   * Flink configuration from backend
-   */
-  configuration: ConfigurationInterface;
-  /**
-   * Refresh stream generated from the configuration
-   */
-  refresh$ = new Subject<boolean>().asObservable();
-  /**
-   * Force refresh stream trigger manually
-   */
-  private forceRefresh$ = new Subject<boolean>();
-  /**
-   * Document visibility stream
-   */
-  private visibility$ = fromEvent(window, 'visibilitychange').pipe(map(e => !(e.target as Document).hidden));
+  private readonly httpClient = inject(HttpClient);
+  private readonly configService = inject(ConfigService);
+  private readonly router = inject(Router);
 
-  /**
-   * Trigger force refresh
-   */
-  forceRefresh(): void {
+  /** Error server response message cache list. */
+  public listOfErrorMessage: string[] = [];
+
+  /** Flink configuration from backend. */
+  public configuration: Configuration;
+
+  public refresh$: Observable<boolean>;
+  private readonly forceRefresh$ = new Subject<boolean>();
+  private readonly visibility$ = fromEvent(window, 'visibilitychange').pipe(map(e => !(e.target as Document).hidden));
+
+  public forceRefresh(): void {
     this.forceRefresh$.next(true);
   }
 
   /**
-   * Create refresh stream when APP_INITIALIZER
+   * Create refresh stream when is initializing
    * refresh interval stream will be regenerated when NavigationEnd || forceRefresh || visibility change
-   *
-   * @param router
    */
-  boot(router: Router): Promise<ConfigurationInterface> {
-    return this.httpClient
-      .get<ConfigurationInterface>(`${BASE_URL}/config`)
-      .pipe(
-        tap(data => {
-          this.configuration = data;
-          const navigationEnd$ = router.events.pipe(
-            filter(item => item instanceof NavigationEnd),
-            mapTo(true)
-          );
-          const interval$ = interval(this.configuration['refresh-interval']).pipe(mapTo(true), startWith(true));
-          this.refresh$ = merge(this.visibility$, this.forceRefresh$, navigationEnd$).pipe(
-            startWith(true),
-            debounceTime(300),
-            switchMap(active => (active ? interval$ : EMPTY)),
-            share()
-          );
-        })
-      )
-      .toPromise();
+  public boot(): Observable<Configuration | undefined> {
+    return this.httpClient.get<Configuration>(`${this.configService.BASE_URL}/config`).pipe(
+      tap(data => {
+        this.configuration = data;
+        const navigationEnd$ = this.router.events.pipe(
+          filter(item => item instanceof NavigationEnd),
+          map(() => true)
+        );
+        const interval$ = interval(this.configuration['refresh-interval']).pipe(
+          map(() => true),
+          startWith(true)
+        );
+        this.refresh$ = merge(this.visibility$, this.forceRefresh$, navigationEnd$).pipe(
+          startWith(true),
+          debounceTime(300),
+          switchMap(active => (active ? interval$ : EMPTY)),
+          share()
+        );
+      })
+    );
   }
-
-  constructor(private httpClient: HttpClient) {}
 }

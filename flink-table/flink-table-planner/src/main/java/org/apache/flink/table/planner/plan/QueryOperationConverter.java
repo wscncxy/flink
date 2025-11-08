@@ -19,12 +19,14 @@
 package org.apache.flink.table.planner.plan;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.legacy.table.sources.StreamTableSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.TableException;
-import org.apache.flink.table.api.TableSchema;
+import org.apache.flink.table.calcite.bridge.PlannerExternalQueryOperation;
 import org.apache.flink.table.catalog.CatalogManager;
 import org.apache.flink.table.catalog.ConnectorCatalogTable;
+import org.apache.flink.table.catalog.ContextResolvedFunction;
+import org.apache.flink.table.catalog.ContextResolvedTable;
 import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.UnresolvedIdentifier;
@@ -34,27 +36,30 @@ import org.apache.flink.table.expressions.Expression;
 import org.apache.flink.table.expressions.ExpressionDefaultVisitor;
 import org.apache.flink.table.expressions.FieldReferenceExpression;
 import org.apache.flink.table.expressions.ResolvedExpression;
+import org.apache.flink.table.expressions.TableReferenceExpression;
 import org.apache.flink.table.expressions.ValueLiteralExpression;
 import org.apache.flink.table.functions.BuiltInFunctionDefinitions;
 import org.apache.flink.table.functions.FunctionDefinition;
 import org.apache.flink.table.functions.TableFunction;
 import org.apache.flink.table.functions.TableFunctionDefinition;
+import org.apache.flink.table.legacy.sources.LookupableTableSource;
+import org.apache.flink.table.legacy.sources.TableSource;
 import org.apache.flink.table.operations.AggregateQueryOperation;
-import org.apache.flink.table.operations.CalculatedQueryOperation;
-import org.apache.flink.table.operations.CatalogQueryOperation;
+import org.apache.flink.table.operations.CorrelatedFunctionQueryOperation;
+import org.apache.flink.table.operations.DataStreamQueryOperation;
 import org.apache.flink.table.operations.DistinctQueryOperation;
+import org.apache.flink.table.operations.ExternalQueryOperation;
 import org.apache.flink.table.operations.FilterQueryOperation;
-import org.apache.flink.table.operations.JavaDataStreamQueryOperation;
-import org.apache.flink.table.operations.JavaExternalQueryOperation;
+import org.apache.flink.table.operations.FunctionQueryOperation;
 import org.apache.flink.table.operations.JoinQueryOperation;
 import org.apache.flink.table.operations.JoinQueryOperation.JoinType;
+import org.apache.flink.table.operations.PartitionQueryOperation;
 import org.apache.flink.table.operations.ProjectQueryOperation;
 import org.apache.flink.table.operations.QueryOperation;
 import org.apache.flink.table.operations.QueryOperationVisitor;
-import org.apache.flink.table.operations.ScalaDataStreamQueryOperation;
-import org.apache.flink.table.operations.ScalaExternalQueryOperation;
 import org.apache.flink.table.operations.SetQueryOperation;
 import org.apache.flink.table.operations.SortQueryOperation;
+import org.apache.flink.table.operations.SourceQueryOperation;
 import org.apache.flink.table.operations.TableSourceQueryOperation;
 import org.apache.flink.table.operations.ValuesQueryOperation;
 import org.apache.flink.table.operations.WindowAggregateQueryOperation;
@@ -63,25 +68,21 @@ import org.apache.flink.table.operations.utils.QueryOperationDefaultVisitor;
 import org.apache.flink.table.planner.calcite.FlinkContext;
 import org.apache.flink.table.planner.calcite.FlinkRelBuilder;
 import org.apache.flink.table.planner.calcite.FlinkTypeFactory;
+import org.apache.flink.table.planner.calcite.RexTableArgCall;
 import org.apache.flink.table.planner.connectors.DynamicSourceUtils;
-import org.apache.flink.table.planner.expressions.PlannerNamedWindowProperty;
-import org.apache.flink.table.planner.expressions.PlannerProctimeAttribute;
-import org.apache.flink.table.planner.expressions.PlannerRowtimeAttribute;
-import org.apache.flink.table.planner.expressions.PlannerWindowEnd;
-import org.apache.flink.table.planner.expressions.PlannerWindowReference;
-import org.apache.flink.table.planner.expressions.PlannerWindowStart;
 import org.apache.flink.table.planner.expressions.RexNodeExpression;
 import org.apache.flink.table.planner.expressions.SqlAggFunctionVisitor;
 import org.apache.flink.table.planner.expressions.converter.ExpressionConverter;
 import org.apache.flink.table.planner.functions.bridging.BridgingSqlFunction;
 import org.apache.flink.table.planner.functions.utils.TableSqlFunction;
-import org.apache.flink.table.planner.operations.DataStreamQueryOperation;
+import org.apache.flink.table.planner.operations.InternalDataStreamQueryOperation;
 import org.apache.flink.table.planner.operations.PlannerQueryOperation;
 import org.apache.flink.table.planner.operations.RichTableSourceQueryOperation;
 import org.apache.flink.table.planner.plan.logical.LogicalWindow;
 import org.apache.flink.table.planner.plan.logical.SessionGroupWindow;
 import org.apache.flink.table.planner.plan.logical.SlidingGroupWindow;
 import org.apache.flink.table.planner.plan.logical.TumblingGroupWindow;
+import org.apache.flink.table.planner.plan.schema.CatalogSourceTable;
 import org.apache.flink.table.planner.plan.schema.DataStreamTable;
 import org.apache.flink.table.planner.plan.schema.DataStreamTable$;
 import org.apache.flink.table.planner.plan.schema.LegacyTableSourceTable;
@@ -89,12 +90,19 @@ import org.apache.flink.table.planner.plan.schema.TypedFlinkTableFunction;
 import org.apache.flink.table.planner.plan.stats.FlinkStatistic;
 import org.apache.flink.table.planner.sources.TableSourceUtil;
 import org.apache.flink.table.planner.utils.ShortcutUtils;
-import org.apache.flink.table.sources.LookupableTableSource;
-import org.apache.flink.table.sources.StreamTableSource;
-import org.apache.flink.table.sources.TableSource;
+import org.apache.flink.table.runtime.groupwindow.NamedWindowProperty;
+import org.apache.flink.table.runtime.groupwindow.ProctimeAttribute;
+import org.apache.flink.table.runtime.groupwindow.RowtimeAttribute;
+import org.apache.flink.table.runtime.groupwindow.WindowEnd;
+import org.apache.flink.table.runtime.groupwindow.WindowReference;
+import org.apache.flink.table.runtime.groupwindow.WindowStart;
 import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.utils.DataTypeUtils;
 import org.apache.flink.util.Preconditions;
 
+import org.apache.calcite.plan.ViewExpanders;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -139,10 +147,12 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
     private final AggregateVisitor aggregateVisitor = new AggregateVisitor();
     private final TableAggregateVisitor tableAggregateVisitor = new TableAggregateVisitor();
     private final JoinExpressionVisitor joinExpressionVisitor = new JoinExpressionVisitor();
+    private final boolean isBatchMode;
 
-    public QueryOperationConverter(FlinkRelBuilder relBuilder) {
+    public QueryOperationConverter(FlinkRelBuilder relBuilder, boolean isBatchMode) {
         this.relBuilder = relBuilder;
         this.expressionConverter = new ExpressionConverter(relBuilder);
+        this.isBatchMode = isBatchMode;
     }
 
     @Override
@@ -183,8 +193,8 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
 
             List<RexNode> groupings = convertToRexNodes(windowAggregate.getGroupingExpressions());
             LogicalWindow logicalWindow = toLogicalWindow(windowAggregate.getGroupWindow());
-            PlannerWindowReference windowReference = logicalWindow.aliasAttribute();
-            List<PlannerNamedWindowProperty> windowProperties =
+            WindowReference windowReference = logicalWindow.aliasAttribute();
+            List<NamedWindowProperty> windowProperties =
                     windowAggregate.getWindowPropertiesExpressions().stream()
                             .map(expr -> convertToWindowProperty(expr, windowReference))
                             .collect(toList());
@@ -194,8 +204,8 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
                     .build();
         }
 
-        private PlannerNamedWindowProperty convertToWindowProperty(
-                Expression expression, PlannerWindowReference windowReference) {
+        private NamedWindowProperty convertToWindowProperty(
+                Expression expression, WindowReference windowReference) {
             Preconditions.checkArgument(
                     expression instanceof CallExpression, "This should never happened");
             CallExpression aliasExpr = (CallExpression) expression;
@@ -212,16 +222,13 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
             CallExpression windowPropertyCallExpr = (CallExpression) windowPropertyExpr;
             FunctionDefinition fd = windowPropertyCallExpr.getFunctionDefinition();
             if (BuiltInFunctionDefinitions.WINDOW_START == fd) {
-                return new PlannerNamedWindowProperty(
-                        name, new PlannerWindowStart(windowReference));
+                return new NamedWindowProperty(name, new WindowStart(windowReference));
             } else if (BuiltInFunctionDefinitions.WINDOW_END == fd) {
-                return new PlannerNamedWindowProperty(name, new PlannerWindowEnd(windowReference));
+                return new NamedWindowProperty(name, new WindowEnd(windowReference));
             } else if (BuiltInFunctionDefinitions.PROCTIME == fd) {
-                return new PlannerNamedWindowProperty(
-                        name, new PlannerProctimeAttribute(windowReference));
+                return new NamedWindowProperty(name, new ProctimeAttribute(windowReference));
             } else if (BuiltInFunctionDefinitions.ROWTIME == fd) {
-                return new PlannerNamedWindowProperty(
-                        name, new PlannerRowtimeAttribute(windowReference));
+                return new NamedWindowProperty(name, new RowtimeAttribute(windowReference));
             } else {
                 throw new TableException("Invalid literal.");
             }
@@ -287,36 +294,115 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
         }
 
         @Override
-        public RelNode visit(CalculatedQueryOperation calculatedTable) {
-            FunctionDefinition functionDefinition = calculatedTable.getFunctionDefinition();
-            List<RexNode> parameters = convertToRexNodes(calculatedTable.getArguments());
-            FlinkTypeFactory typeFactory = relBuilder.getTypeFactory();
+        public RelNode visit(FunctionQueryOperation functionTable) {
+            final FlinkTypeFactory typeFactory = ShortcutUtils.unwrapTypeFactory(relBuilder);
+            final ContextResolvedFunction contextFunction = functionTable.getResolvedFunction();
+            final List<ResolvedExpression> resolvedArgs = functionTable.getArguments();
+            final LogicalType outputType = functionTable.getOutputDataType().getLogicalType();
+            final RelDataType outputRelDataType =
+                    typeFactory.buildRelNodeRowType((RowType) outputType);
+
+            final List<RelNode> inputStack = new ArrayList<>();
+            final List<RexNode> rexNodeArgs =
+                    resolvedArgs.stream()
+                            .map(
+                                    resolvedArg -> {
+                                        if (resolvedArg instanceof TableReferenceExpression) {
+                                            final TableReferenceExpression tableRef =
+                                                    (TableReferenceExpression) resolvedArg;
+                                            final LogicalType tableArgType =
+                                                    tableRef.getOutputDataType().getLogicalType();
+                                            final RelDataType rowType =
+                                                    typeFactory.buildRelNodeRowType(
+                                                            (RowType) tableArgType);
+                                            final int[] partitionKeys;
+                                            if (tableRef.getQueryOperation()
+                                                    instanceof PartitionQueryOperation) {
+                                                final PartitionQueryOperation partitionOperation =
+                                                        (PartitionQueryOperation)
+                                                                tableRef.getQueryOperation();
+                                                partitionKeys =
+                                                        partitionOperation.getPartitionKeys();
+                                            } else {
+                                                partitionKeys = new int[0];
+                                            }
+                                            final RexTableArgCall tableArgCall =
+                                                    new RexTableArgCall(
+                                                            rowType,
+                                                            inputStack.size(),
+                                                            partitionKeys,
+                                                            new int[0]);
+                                            inputStack.add(relBuilder.build());
+                                            return tableArgCall;
+                                        }
+                                        return convertExprToRexNode(resolvedArg);
+                                    })
+                            .collect(Collectors.toList());
+
+            // relBuilder.build() works in LIFO fashion, this restores the original input order
+            Collections.reverse(inputStack);
+
+            final BridgingSqlFunction sqlFunction =
+                    BridgingSqlFunction.of(relBuilder.getCluster(), contextFunction);
+
+            final RexNode call =
+                    relBuilder
+                            .getRexBuilder()
+                            .makeCall(outputRelDataType, sqlFunction, rexNodeArgs);
+            final RelNode functionScan =
+                    LogicalTableFunctionScan.create(
+                            relBuilder.getCluster(),
+                            inputStack,
+                            call,
+                            null,
+                            outputRelDataType,
+                            Collections.emptySet());
+            relBuilder.push(functionScan);
+            return relBuilder.build();
+        }
+
+        @Override
+        public RelNode visit(PartitionQueryOperation partition) {
+            // Currently, PartitionQueryOperation only serves as a
+            // marker for PTFs with set semantics.
+            return relBuilder.build();
+        }
+
+        @Override
+        public RelNode visit(CorrelatedFunctionQueryOperation correlatedFunction) {
+            final ContextResolvedFunction contextFunction =
+                    correlatedFunction.getResolvedFunction();
+            final List<RexNode> parameters = convertToRexNodes(correlatedFunction.getArguments());
+
+            final FunctionDefinition functionDefinition = contextFunction.getDefinition();
             if (functionDefinition instanceof TableFunctionDefinition) {
+                final FlinkTypeFactory typeFactory = relBuilder.getTypeFactory();
                 return convertLegacyTableFunction(
-                        calculatedTable,
+                        correlatedFunction,
                         (TableFunctionDefinition) functionDefinition,
                         parameters,
                         typeFactory);
             }
 
             final BridgingSqlFunction sqlFunction =
-                    BridgingSqlFunction.of(
-                            relBuilder.getCluster(),
-                            calculatedTable.getFunctionIdentifier().orElse(null),
-                            calculatedTable.getFunctionDefinition());
+                    BridgingSqlFunction.of(relBuilder.getCluster(), contextFunction);
 
-            return relBuilder
-                    .functionScan(sqlFunction, 0, parameters)
-                    .rename(calculatedTable.getResolvedSchema().getColumnNames())
-                    .build();
+            FlinkRelBuilder.pushFunctionScan(
+                    relBuilder,
+                    sqlFunction,
+                    0,
+                    parameters,
+                    correlatedFunction.getResolvedSchema().getColumnNames());
+
+            return relBuilder.build();
         }
 
         private RelNode convertLegacyTableFunction(
-                CalculatedQueryOperation calculatedTable,
+                CorrelatedFunctionQueryOperation correlatedFunction,
                 TableFunctionDefinition functionDefinition,
                 List<RexNode> parameters,
                 FlinkTypeFactory typeFactory) {
-            List<String> fieldNames = calculatedTable.getResolvedSchema().getColumnNames();
+            List<String> fieldNames = correlatedFunction.getResolvedSchema().getColumnNames();
 
             TableFunction<?> tableFunction = functionDefinition.getTableFunction();
             DataType resultType = fromLegacyInfoToDataType(functionDefinition.getResultType());
@@ -326,7 +412,7 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
 
             final TableSqlFunction sqlFunction =
                     new TableSqlFunction(
-                            calculatedTable.getFunctionIdentifier().orElse(null),
+                            correlatedFunction.getResolvedFunction().getIdentifier().orElse(null),
                             tableFunction.toString(),
                             tableFunction,
                             resultType,
@@ -345,13 +431,15 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
         }
 
         @Override
-        public RelNode visit(CatalogQueryOperation catalogTable) {
-            ObjectIdentifier objectIdentifier = catalogTable.getTableIdentifier();
+        public RelNode visit(SourceQueryOperation queryOperation) {
+            ContextResolvedTable contextResolvedTable = queryOperation.getContextResolvedTable();
+            if (contextResolvedTable.isAnonymous()) {
+                return CatalogSourceTable.createAnonymous(
+                                relBuilder, contextResolvedTable, isBatchMode)
+                        .toRel(ViewExpanders.simpleContext(relBuilder.getCluster()));
+            }
             return relBuilder
-                    .scan(
-                            objectIdentifier.getCatalogName(),
-                            objectIdentifier.getDatabaseName(),
-                            objectIdentifier.getObjectName())
+                    .scan(queryOperation.getContextResolvedTable().getIdentifier().toList())
                     .build();
         }
 
@@ -361,7 +449,11 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
                     relBuilder
                             .getTypeFactory()
                             .buildRelNodeRowType(
-                                    TableSchema.fromResolvedSchema(values.getResolvedSchema()));
+                                    (RowType)
+                                            DataTypeUtils
+                                                    .fromResolvedSchemaPreservingTimeAttributes(
+                                                            values.getResolvedSchema())
+                                                    .getLogicalType());
             if (values.getValues().isEmpty()) {
                 relBuilder.values(rowType);
                 return relBuilder.build();
@@ -431,41 +523,24 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
         public RelNode visit(QueryOperation other) {
             if (other instanceof PlannerQueryOperation) {
                 return ((PlannerQueryOperation) other).getCalciteTree();
-            } else if (other instanceof DataStreamQueryOperation) {
-                return convertToDataStreamScan((DataStreamQueryOperation<?>) other);
-            } else if (other instanceof JavaExternalQueryOperation) {
-                final JavaExternalQueryOperation<?> externalQueryOperation =
-                        (JavaExternalQueryOperation<?>) other;
+            } else if (other instanceof PlannerExternalQueryOperation) {
+                return ((PlannerExternalQueryOperation) other).getCalciteTree();
+            } else if (other instanceof InternalDataStreamQueryOperation) {
+                return convertToDataStreamScan((InternalDataStreamQueryOperation<?>) other);
+            } else if (other instanceof ExternalQueryOperation) {
+                final ExternalQueryOperation<?> externalQueryOperation =
+                        (ExternalQueryOperation<?>) other;
                 return convertToExternalScan(
-                        externalQueryOperation.getIdentifier(),
+                        externalQueryOperation.getContextResolvedTable(),
                         externalQueryOperation.getDataStream(),
                         externalQueryOperation.getPhysicalDataType(),
                         externalQueryOperation.isTopLevelRecord(),
-                        externalQueryOperation.getChangelogMode(),
-                        externalQueryOperation.getResolvedSchema());
-            } else if (other instanceof ScalaExternalQueryOperation) {
-                final ScalaExternalQueryOperation<?> externalQueryOperation =
-                        (ScalaExternalQueryOperation<?>) other;
-                return convertToExternalScan(
-                        externalQueryOperation.getIdentifier(),
-                        externalQueryOperation.getDataStream(),
-                        externalQueryOperation.getPhysicalDataType(),
-                        externalQueryOperation.isTopLevelRecord(),
-                        externalQueryOperation.getChangelogMode(),
-                        externalQueryOperation.getResolvedSchema());
+                        externalQueryOperation.getChangelogMode());
             }
             // legacy
-            else if (other instanceof JavaDataStreamQueryOperation) {
-                JavaDataStreamQueryOperation<?> dataStreamQueryOperation =
-                        (JavaDataStreamQueryOperation<?>) other;
-                return convertToDataStreamScan(
-                        dataStreamQueryOperation.getDataStream(),
-                        dataStreamQueryOperation.getFieldIndices(),
-                        dataStreamQueryOperation.getResolvedSchema(),
-                        dataStreamQueryOperation.getIdentifier());
-            } else if (other instanceof ScalaDataStreamQueryOperation) {
-                ScalaDataStreamQueryOperation dataStreamQueryOperation =
-                        (ScalaDataStreamQueryOperation<?>) other;
+            else if (other instanceof DataStreamQueryOperation) {
+                DataStreamQueryOperation<?> dataStreamQueryOperation =
+                        (DataStreamQueryOperation<?>) other;
                 return convertToDataStreamScan(
                         dataStreamQueryOperation.getDataStream(),
                         dataStreamQueryOperation.getFieldIndices(),
@@ -531,27 +606,24 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
         }
 
         private RelNode convertToExternalScan(
-                ObjectIdentifier identifier,
+                ContextResolvedTable contextResolvedTable,
                 DataStream<?> dataStream,
                 DataType physicalDataType,
                 boolean isTopLevelRecord,
-                ChangelogMode changelogMode,
-                ResolvedSchema resolvedSchema) {
+                ChangelogMode changelogMode) {
             final FlinkContext flinkContext = ShortcutUtils.unwrapContext(relBuilder);
-            final ReadableConfig config = flinkContext.getTableConfig().getConfiguration();
             return DynamicSourceUtils.convertDataStreamToRel(
                     flinkContext.isBatchMode(),
-                    config,
+                    flinkContext.getTableConfig(),
                     relBuilder,
-                    identifier,
-                    resolvedSchema,
+                    contextResolvedTable,
                     dataStream,
                     physicalDataType,
                     isTopLevelRecord,
                     changelogMode);
         }
 
-        private RelNode convertToDataStreamScan(DataStreamQueryOperation<?> operation) {
+        private RelNode convertToDataStreamScan(InternalDataStreamQueryOperation<?> operation) {
             List<String> names;
             ObjectIdentifier identifier = operation.getIdentifier();
             if (identifier != null) {
@@ -633,9 +705,8 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
 
         private LogicalWindow toLogicalWindow(ResolvedGroupWindow window) {
             DataType windowType = window.getTimeAttribute().getOutputDataType();
-            PlannerWindowReference windowReference =
-                    new PlannerWindowReference(
-                            window.getAlias(), fromDataToLogicalType(windowType));
+            WindowReference windowReference =
+                    new WindowReference(window.getAlias(), fromDataToLogicalType(windowType));
             switch (window.getType()) {
                 case SLIDE:
                     return new SlidingGroupWindow(
@@ -701,21 +772,8 @@ public class QueryOperationConverter extends QueryOperationDefaultVisitor<RelNod
                                     })
                             .collect(Collectors.toList());
 
-            CallExpression newCall;
-            if (callExpression.getFunctionIdentifier().isPresent()) {
-                newCall =
-                        new CallExpression(
-                                callExpression.getFunctionIdentifier().get(),
-                                callExpression.getFunctionDefinition(),
-                                newChildren,
-                                callExpression.getOutputDataType());
-            } else {
-                newCall =
-                        new CallExpression(
-                                callExpression.getFunctionDefinition(),
-                                newChildren,
-                                callExpression.getOutputDataType());
-            }
+            final CallExpression newCall =
+                    callExpression.replaceArgs(newChildren, callExpression.getOutputDataType());
             return convertExprToRexNode(newCall);
         }
 

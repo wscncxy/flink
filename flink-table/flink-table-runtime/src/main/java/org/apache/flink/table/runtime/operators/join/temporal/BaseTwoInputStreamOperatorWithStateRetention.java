@@ -81,6 +81,11 @@ public abstract class BaseTwoInputStreamOperatorWithStateRetention
     }
 
     @Override
+    public boolean useInterruptibleTimers() {
+        return true;
+    }
+
+    @Override
     public void open() throws Exception {
         initializeTimerService();
 

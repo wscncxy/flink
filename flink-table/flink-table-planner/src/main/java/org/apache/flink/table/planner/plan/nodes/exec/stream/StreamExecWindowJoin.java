@@ -19,32 +19,38 @@
 
 package org.apache.flink.table.planner.plan.nodes.exec.stream;
 
+import org.apache.flink.FlinkVersion;
 import org.apache.flink.api.dag.Transformation;
+import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.streaming.api.operators.TwoInputStreamOperator;
 import org.apache.flink.streaming.api.transformations.TwoInputTransformation;
-import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableException;
+import org.apache.flink.table.api.config.ExecutionConfigOptions;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.logical.WindowAttachedWindowingStrategy;
 import org.apache.flink.table.planner.plan.logical.WindowingStrategy;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
+import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeConfig;
+import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeContext;
+import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeMetadata;
 import org.apache.flink.table.planner.plan.nodes.exec.InputProperty;
 import org.apache.flink.table.planner.plan.nodes.exec.SingleTransformationTranslator;
 import org.apache.flink.table.planner.plan.nodes.exec.spec.JoinSpec;
+import org.apache.flink.table.planner.plan.nodes.exec.utils.ExecNodeUtil;
 import org.apache.flink.table.planner.plan.utils.JoinUtil;
 import org.apache.flink.table.planner.plan.utils.KeySelectorUtil;
+import org.apache.flink.table.planner.utils.TableConfigUtils;
 import org.apache.flink.table.runtime.generated.GeneratedJoinCondition;
 import org.apache.flink.table.runtime.keyselector.RowDataKeySelector;
-import org.apache.flink.table.runtime.operators.join.window.WindowJoinOperator;
 import org.apache.flink.table.runtime.operators.join.window.WindowJoinOperatorBuilder;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.runtime.util.TimeWindowUtil;
 import org.apache.flink.table.types.logical.RowType;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Lists;
+import org.apache.flink.shaded.guava33.com.google.common.collect.Lists;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.ZoneId;
@@ -54,9 +60,18 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /** {@link StreamExecNode} for WindowJoin. */
-@JsonIgnoreProperties(ignoreUnknown = true)
+@ExecNodeMetadata(
+        name = "stream-exec-window-join",
+        version = 1,
+        consumedOptions = "table.local-time-zone",
+        producedTransformations = StreamExecWindowJoin.WINDOW_JOIN_TRANSFORMATION,
+        minPlanVersion = FlinkVersion.v1_15,
+        minStateVersion = FlinkVersion.v1_15)
 public class StreamExecWindowJoin extends ExecNodeBase<RowData>
         implements StreamExecNode<RowData>, SingleTransformationTranslator<RowData> {
+
+    public static final String WINDOW_JOIN_TRANSFORMATION = "window-join";
+
     public static final String FIELD_NAME_JOIN_SPEC = "joinSpec";
     public static final String FIELD_NAME_LEFT_WINDOWING = "leftWindowing";
     public static final String FIELD_NAME_RIGHT_WINDOWING = "rightWindowing";
@@ -71,6 +86,7 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
     private final WindowingStrategy rightWindowing;
 
     public StreamExecWindowJoin(
+            ReadableConfig tableConfig,
             JoinSpec joinSpec,
             WindowingStrategy leftWindowing,
             WindowingStrategy rightWindowing,
@@ -79,10 +95,12 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
             RowType outputType,
             String description) {
         this(
+                ExecNodeContext.newNodeId(),
+                ExecNodeContext.newContext(StreamExecWindowJoin.class),
+                ExecNodeContext.newPersistedConfig(StreamExecWindowJoin.class, tableConfig),
                 joinSpec,
                 leftWindowing,
                 rightWindowing,
-                getNewNodeId(),
                 Lists.newArrayList(leftInputProperty, rightInputProperty),
                 outputType,
                 description);
@@ -90,14 +108,16 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
 
     @JsonCreator
     public StreamExecWindowJoin(
+            @JsonProperty(FIELD_NAME_ID) int id,
+            @JsonProperty(FIELD_NAME_TYPE) ExecNodeContext context,
+            @JsonProperty(FIELD_NAME_CONFIGURATION) ReadableConfig persistedConfig,
             @JsonProperty(FIELD_NAME_JOIN_SPEC) JoinSpec joinSpec,
             @JsonProperty(FIELD_NAME_LEFT_WINDOWING) WindowingStrategy leftWindowing,
             @JsonProperty(FIELD_NAME_RIGHT_WINDOWING) WindowingStrategy rightWindowing,
-            @JsonProperty(FIELD_NAME_ID) int id,
             @JsonProperty(FIELD_NAME_INPUT_PROPERTIES) List<InputProperty> inputProperties,
             @JsonProperty(FIELD_NAME_OUTPUT_TYPE) RowType outputType,
             @JsonProperty(FIELD_NAME_DESCRIPTION) String description) {
-        super(id, inputProperties, outputType, description);
+        super(id, context, persistedConfig, inputProperties, outputType, description);
         checkArgument(inputProperties.size() == 2);
         this.joinSpec = checkNotNull(joinSpec);
         validate(leftWindowing);
@@ -119,7 +139,8 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
 
     @Override
     @SuppressWarnings("unchecked")
-    protected Transformation<RowData> translateToPlanInternal(PlannerBase planner) {
+    protected Transformation<RowData> translateToPlanInternal(
+            PlannerBase planner, ExecNodeConfig config) {
         int leftWindowEndIndex = ((WindowAttachedWindowingStrategy) leftWindowing).getWindowEnd();
         int rightWindowEndIndex = ((WindowAttachedWindowingStrategy) rightWindowing).getWindowEnd();
         final ExecEdge leftInputEdge = getInputEdges().get(0);
@@ -140,13 +161,19 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
         final InternalTypeInfo<RowData> leftTypeInfo = InternalTypeInfo.of(leftType);
         final InternalTypeInfo<RowData> rightTypeInfo = InternalTypeInfo.of(rightType);
 
-        final TableConfig tableConfig = planner.getTableConfig();
         GeneratedJoinCondition generatedCondition =
-                JoinUtil.generateConditionFunction(tableConfig, joinSpec, leftType, rightType);
+                JoinUtil.generateConditionFunction(
+                        config,
+                        planner.getFlinkContext().getClassLoader(),
+                        joinSpec,
+                        leftType,
+                        rightType);
 
         ZoneId shiftTimeZone =
-                TimeWindowUtil.getShiftTimeZone(leftWindowing.getTimeAttributeType(), tableConfig);
-        WindowJoinOperator operator =
+                TimeWindowUtil.getShiftTimeZone(
+                        leftWindowing.getTimeAttributeType(),
+                        TableConfigUtils.getLocalTimeZone(config));
+        WindowJoinOperatorBuilder operatorBuilder =
                 WindowJoinOperatorBuilder.builder()
                         .leftSerializer(leftTypeInfo.toRowSerializer())
                         .rightSerializer(rightTypeInfo.toRowSerializer())
@@ -155,24 +182,31 @@ public class StreamExecWindowJoin extends ExecNodeBase<RowData>
                         .rightWindowEndIndex(rightWindowEndIndex)
                         .filterNullKeys(joinSpec.getFilterNulls())
                         .joinType(joinSpec.getJoinType())
-                        .withShiftTimezone(shiftTimeZone)
-                        .build();
+                        .withShiftTimezone(shiftTimeZone);
+        if (config.get(ExecutionConfigOptions.TABLE_EXEC_ASYNC_STATE_ENABLED)) {
+            operatorBuilder.enableAsyncState();
+        }
+
+        TwoInputStreamOperator<RowData, RowData, RowData> operator = operatorBuilder.build();
 
         final RowType returnType = (RowType) getOutputType();
         final TwoInputTransformation<RowData, RowData, RowData> transform =
-                new TwoInputTransformation<>(
+                ExecNodeUtil.createTwoInputTransformation(
                         leftTransform,
                         rightTransform,
-                        getDescription(),
+                        createTransformationMeta(WINDOW_JOIN_TRANSFORMATION, config),
                         operator,
                         InternalTypeInfo.of(returnType),
-                        leftTransform.getParallelism());
+                        leftTransform.getParallelism(),
+                        false);
 
         // set KeyType and Selector for state
         RowDataKeySelector leftSelect =
-                KeySelectorUtil.getRowDataSelector(leftJoinKey, leftTypeInfo);
+                KeySelectorUtil.getRowDataSelector(
+                        planner.getFlinkContext().getClassLoader(), leftJoinKey, leftTypeInfo);
         RowDataKeySelector rightSelect =
-                KeySelectorUtil.getRowDataSelector(rightJoinKey, rightTypeInfo);
+                KeySelectorUtil.getRowDataSelector(
+                        planner.getFlinkContext().getClassLoader(), rightJoinKey, rightTypeInfo);
         transform.setStateKeySelectors(leftSelect, rightSelect);
         transform.setStateKeyType(leftSelect.getProducedType());
         return transform;

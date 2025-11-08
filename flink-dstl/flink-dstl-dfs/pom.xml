@@ -27,11 +27,10 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-dstl</artifactId>
-		<version>1.15-SNAPSHOT</version>
-		<relativePath>..</relativePath>
+		<version>2.2-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>flink-dstl-dfs_${scala.binary.version}</artifactId>
+	<artifactId>flink-dstl-dfs</artifactId>
 	<name>Flink : DSTL : DFS</name>
 
 	<packaging>jar</packaging>
@@ -50,14 +49,22 @@ under the License.
 			<version>${project.version}</version>
 		</dependency>
 
-        <!-- needed for ExecutionCheckpointingOptions.CHECKPOINTING_TIMEOUT -->
+        <!-- needed for CheckpointingOptions.CHECKPOINTING_TIMEOUT -->
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+			<artifactId>flink-streaming-java</artifactId>
 			<version>${project.version}</version>
 		</dependency>
 
         <!-- test dependencies-->
+
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-core</artifactId>
+			<version>${project.version}</version>
+			<scope>test</scope>
+			<type>test-jar</type>
+		</dependency>
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
@@ -69,7 +76,7 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+			<artifactId>flink-streaming-java</artifactId>
 			<version>${project.version}</version>
 			<scope>test</scope>
 			<type>test-jar</type>

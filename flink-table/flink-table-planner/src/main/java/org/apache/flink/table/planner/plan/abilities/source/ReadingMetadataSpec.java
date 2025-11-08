@@ -26,11 +26,13 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.utils.TypeConversions;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonTypeName;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -40,8 +42,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * columns to/from JSON, but also can read the metadata columns from {@link
  * SupportsReadingMetadata}.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 @JsonTypeName("ReadingMetadata")
-public class ReadingMetadataSpec extends SourceAbilitySpecBase {
+public final class ReadingMetadataSpec extends SourceAbilitySpecBase {
     public static final String FIELD_NAME_METADATA_KEYS = "metadataKeys";
 
     @JsonProperty(FIELD_NAME_METADATA_KEYS)
@@ -76,7 +79,32 @@ public class ReadingMetadataSpec extends SourceAbilitySpecBase {
     }
 
     @Override
+    public boolean needAdjustFieldReferenceAfterProjection() {
+        return false;
+    }
+
+    @Override
     public String getDigests(SourceAbilityContext context) {
         return String.format("metadata=[%s]", String.join(", ", this.metadataKeys));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        if (!super.equals(o)) {
+            return false;
+        }
+        ReadingMetadataSpec that = (ReadingMetadataSpec) o;
+        return Objects.equals(metadataKeys, that.metadataKeys);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), metadataKeys);
     }
 }

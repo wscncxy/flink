@@ -18,11 +18,14 @@
 package org.apache.flink.runtime.rpc;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.rpc.exceptions.RpcLoaderException;
 import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
+import java.util.Comparator;
 import java.util.Iterator;
+import java.util.PriorityQueue;
 import java.util.ServiceLoader;
 
 /**
@@ -90,8 +93,11 @@ public interface RpcSystem extends RpcSystemUtils, AutoCloseable {
      * @return loaded RpcSystem
      */
     static RpcSystem load(Configuration config) {
-        final Iterator<RpcSystemLoader> iterator =
-                ServiceLoader.load(RpcSystemLoader.class).iterator();
+        final PriorityQueue<RpcSystemLoader> rpcSystemLoaders =
+                new PriorityQueue<>(Comparator.comparingInt(RpcSystemLoader::getLoadPriority));
+        ServiceLoader.load(RpcSystemLoader.class).forEach(rpcSystemLoaders::add);
+
+        final Iterator<RpcSystemLoader> iterator = rpcSystemLoaders.iterator();
 
         Exception loadError = null;
         while (iterator.hasNext()) {
@@ -102,7 +108,7 @@ public interface RpcSystem extends RpcSystemUtils, AutoCloseable {
                 loadError = ExceptionUtils.firstOrSuppressed(e, loadError);
             }
         }
-        throw new RuntimeException("Could not load RpcSystem.", loadError);
+        throw new RpcLoaderException("Could not load RpcSystem.", loadError);
     }
 
     /** Descriptor for creating a fork-join thread-pool. */

@@ -19,26 +19,35 @@
 package org.apache.flink.state.api;
 
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.time.Deadline;
-import org.apache.flink.api.java.DataSet;
-import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.connector.source.ReaderOutput;
+import org.apache.flink.api.connector.source.SourceReaderContext;
+import org.apache.flink.api.connector.source.SplitEnumerator;
+import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.client.program.ClusterClient;
-import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.execution.SavepointFormatType;
+import org.apache.flink.core.io.InputStatus;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
-import org.apache.flink.runtime.state.memory.MemoryStateBackend;
+import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
+import org.apache.flink.state.api.utils.JobResultRetriever;
 import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
-import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.test.util.AbstractTestBase;
+import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
+import org.apache.flink.test.util.AbstractTestBaseJUnit4;
+import org.apache.flink.test.util.source.AbstractTestSource;
+import org.apache.flink.test.util.source.SingleSplitEnumerator;
+import org.apache.flink.test.util.source.TestSourceReader;
+import org.apache.flink.test.util.source.TestSplit;
 import org.apache.flink.util.AbstractID;
 import org.apache.flink.util.Collector;
 
@@ -58,7 +67,7 @@ import java.util.stream.Collectors;
 import static org.apache.flink.state.api.utils.SavepointTestBase.waitForAllRunningOrSomeTerminal;
 
 /** IT case for reading state. */
-public abstract class SavepointReaderITTestBase extends AbstractTestBase {
+public abstract class SavepointReaderITTestBase extends AbstractTestBaseJUnit4 {
     static final String UID = "stateful-operator";
 
     static final String LIST_NAME = "list";
@@ -85,40 +94,43 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
 
     @Test
     public void testOperatorStateInputFormat() throws Exception {
-        StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.getExecutionEnvironment();
-        streamEnv.setParallelism(4);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(4);
 
-        DataStream<Integer> data = streamEnv.addSource(new SavepointSource()).rebalance();
+        DataStream<Integer> data =
+                env.fromSource(
+                                new SavepointSource(),
+                                WatermarkStrategy.noWatermarks(),
+                                "SavepointSource")
+                        .rebalance();
 
         StatefulOperator statefulOperator = new StatefulOperator(list, union, broadcast);
         data.connect(data.broadcast(broadcast))
                 .process(statefulOperator)
                 .uid(UID)
-                .addSink(new DiscardingSink<>());
+                .sinkTo(new DiscardingSink<>());
 
-        JobGraph jobGraph = streamEnv.getStreamGraph().getJobGraph();
+        JobGraph jobGraph = env.getStreamGraph().getJobGraph();
 
         String savepoint = takeSavepoint(jobGraph);
 
-        ExecutionEnvironment batchEnv = ExecutionEnvironment.getExecutionEnvironment();
+        verifyListState(savepoint, env);
 
-        verifyListState(savepoint, batchEnv);
+        verifyUnionState(savepoint, env);
 
-        verifyUnionState(savepoint, batchEnv);
-
-        verifyBroadcastState(savepoint, batchEnv);
+        verifyBroadcastState(savepoint, env);
     }
 
-    abstract DataSet<Integer> readListState(ExistingSavepoint savepoint) throws IOException;
+    abstract DataStream<Integer> readListState(SavepointReader savepoint) throws IOException;
 
-    abstract DataSet<Integer> readUnionState(ExistingSavepoint savepoint) throws IOException;
+    abstract DataStream<Integer> readUnionState(SavepointReader savepoint) throws IOException;
 
-    abstract DataSet<Tuple2<Integer, String>> readBroadcastState(ExistingSavepoint savepoint)
+    abstract DataStream<Tuple2<Integer, String>> readBroadcastState(SavepointReader savepoint)
             throws IOException;
 
-    private void verifyListState(String path, ExecutionEnvironment batchEnv) throws Exception {
-        ExistingSavepoint savepoint = Savepoint.load(batchEnv, path, new MemoryStateBackend());
-        List<Integer> listResult = readListState(savepoint).collect();
+    private void verifyListState(String path, StreamExecutionEnvironment env) throws Exception {
+        SavepointReader savepoint = SavepointReader.read(env, path, new HashMapStateBackend());
+        List<Integer> listResult = JobResultRetriever.collect(readListState(savepoint));
         listResult.sort(Comparator.naturalOrder());
 
         Assert.assertEquals(
@@ -127,9 +139,9 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
                 listResult);
     }
 
-    private void verifyUnionState(String path, ExecutionEnvironment batchEnv) throws Exception {
-        ExistingSavepoint savepoint = Savepoint.load(batchEnv, path, new MemoryStateBackend());
-        List<Integer> unionResult = readUnionState(savepoint).collect();
+    private void verifyUnionState(String path, StreamExecutionEnvironment env) throws Exception {
+        SavepointReader savepoint = SavepointReader.read(env, path, new HashMapStateBackend());
+        List<Integer> unionResult = JobResultRetriever.collect(readUnionState(savepoint));
         unionResult.sort(Comparator.naturalOrder());
 
         Assert.assertEquals(
@@ -138,9 +150,11 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
                 unionResult);
     }
 
-    private void verifyBroadcastState(String path, ExecutionEnvironment batchEnv) throws Exception {
-        ExistingSavepoint savepoint = Savepoint.load(batchEnv, path, new MemoryStateBackend());
-        List<Tuple2<Integer, String>> broadcastResult = readBroadcastState(savepoint).collect();
+    private void verifyBroadcastState(String path, StreamExecutionEnvironment env)
+            throws Exception {
+        SavepointReader savepoint = SavepointReader.read(env, path, new HashMapStateBackend());
+        List<Tuple2<Integer, String>> broadcastResult =
+                JobResultRetriever.collect(readBroadcastState(savepoint));
 
         List<Integer> broadcastStateKeys =
                 broadcastResult.stream()
@@ -171,7 +185,7 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
     private String takeSavepoint(JobGraph jobGraph) throws Exception {
         SavepointSource.initializeForTest();
 
-        ClusterClient<?> client = miniClusterResource.getClusterClient();
+        ClusterClient<?> client = MINI_CLUSTER_RESOURCE.getClusterClient();
         JobID jobId = jobGraph.getJobID();
 
         Deadline deadline = Deadline.fromNow(Duration.ofMinutes(5));
@@ -181,7 +195,7 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
         try {
             JobID jobID = client.submitJob(jobGraph).get();
 
-            waitForAllRunningOrSomeTerminal(jobID, miniClusterResource);
+            waitForAllRunningOrSomeTerminal(jobID, MINI_CLUSTER_RESOURCE);
             boolean finished = false;
             while (deadline.hasTimeLeft()) {
                 if (SavepointSource.isFinished()) {
@@ -201,42 +215,58 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
                 Assert.fail("Failed to initialize state within deadline");
             }
 
-            CompletableFuture<String> path = client.triggerSavepoint(jobID, dirPath);
+            CompletableFuture<String> path =
+                    client.triggerSavepoint(jobID, dirPath, SavepointFormatType.CANONICAL);
             return path.get(deadline.timeLeft().toMillis(), TimeUnit.MILLISECONDS);
         } finally {
             client.cancel(jobId).get();
         }
     }
 
-    private static class SavepointSource implements SourceFunction<Integer> {
+    private static class SavepointSource extends AbstractTestSource<Integer> {
         private static volatile boolean finished;
-
-        private volatile boolean running = true;
 
         private static final Integer[] elements = {1, 2, 3};
 
         @Override
-        public void run(SourceContext<Integer> ctx) {
-            synchronized (ctx.getCheckpointLock()) {
-                for (Integer element : elements) {
-                    ctx.collect(element);
-                }
-
-                finished = true;
-            }
-
-            while (running) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    // ignore
-                }
-            }
+        public SplitEnumerator<TestSplit, Void> createEnumerator(
+                SplitEnumeratorContext<TestSplit> enumContext) {
+            return new SingleSplitEnumerator(enumContext);
         }
 
         @Override
-        public void cancel() {
-            running = false;
+        public TestSourceReader<Integer> createReader(SourceReaderContext readerContext) {
+            return new TestSourceReader<>(readerContext) {
+                private boolean receivedSplit = false;
+                private CompletableFuture<Void> availability = new CompletableFuture<>();
+
+                @Override
+                public void addSplits(List<TestSplit> splits) {
+                    if (!splits.isEmpty()) {
+                        receivedSplit = true;
+                        if (!availability.isDone()) {
+                            availability.complete(null);
+                        }
+                    }
+                }
+
+                @Override
+                public InputStatus pollNext(ReaderOutput<Integer> output) {
+                    if (receivedSplit) {
+                        for (Integer element : elements) {
+                            output.collect(element);
+                        }
+                        finished = true;
+                        availability = new CompletableFuture<>();
+                    }
+                    return InputStatus.NOTHING_AVAILABLE;
+                }
+
+                @Override
+                public CompletableFuture<Void> isAvailable() {
+                    return availability;
+                }
+            };
         }
 
         private static void initializeForTest() {
@@ -275,7 +305,7 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
         }
 
         @Override
-        public void open(Configuration parameters) {
+        public void open(OpenContext openContext) {
             elements = new ArrayList<>();
         }
 
@@ -292,13 +322,9 @@ public abstract class SavepointReaderITTestBase extends AbstractTestBase {
 
         @Override
         public void snapshotState(FunctionSnapshotContext context) throws Exception {
-            listState.clear();
+            listState.update(elements);
 
-            listState.addAll(elements);
-
-            unionState.clear();
-
-            unionState.addAll(elements);
+            unionState.update(elements);
         }
 
         @Override

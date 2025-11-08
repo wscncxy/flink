@@ -24,7 +24,7 @@ import org.apache.flink.runtime.io.network.api.EndOfData;
 import org.apache.flink.runtime.io.network.api.EndOfPartitionEvent;
 import org.apache.flink.runtime.io.network.partition.PrioritizedDeque;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Sets;
+import org.apache.flink.shaded.guava33.com.google.common.collect.Sets;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -75,6 +75,8 @@ public class UnionInputGate extends InputGate {
     private final Set<IndexedInputGate> inputGatesWithRemainingData;
 
     private final Set<IndexedInputGate> inputGatesWithRemainingUserData;
+
+    private boolean shouldDrainOnEndOfData = true;
 
     /**
      * Gates, which notified this input gate about available data. We are using it as a FIFO queue
@@ -180,8 +182,14 @@ public class UnionInputGate extends InputGate {
     }
 
     @Override
-    public boolean hasReceivedEndOfData() {
-        return inputGatesWithRemainingUserData.isEmpty();
+    public EndOfDataStatus hasReceivedEndOfData() {
+        if (!inputGatesWithRemainingUserData.isEmpty()) {
+            return EndOfDataStatus.NOT_END_OF_DATA;
+        } else if (shouldDrainOnEndOfData) {
+            return EndOfDataStatus.DRAINED;
+        } else {
+            return EndOfDataStatus.STOPPED;
+        }
     }
 
     @Override
@@ -287,8 +295,9 @@ public class UnionInputGate extends InputGate {
     private void handleEndOfUserDataEvent(BufferOrEvent bufferOrEvent, InputGate inputGate) {
         if (bufferOrEvent.isEvent()
                 && bufferOrEvent.getEvent().getClass() == EndOfData.class
-                && inputGate.hasReceivedEndOfData()) {
+                && inputGate.hasReceivedEndOfData() != EndOfDataStatus.NOT_END_OF_DATA) {
 
+            shouldDrainOnEndOfData &= inputGate.hasReceivedEndOfData() == EndOfDataStatus.DRAINED;
             if (!inputGatesWithRemainingUserData.remove(inputGate)) {
                 throw new IllegalStateException(
                         "Couldn't find input gate in set of remaining input gates.");
@@ -308,6 +317,12 @@ public class UnionInputGate extends InputGate {
     public void sendTaskEvent(TaskEvent event) throws IOException {
         for (InputGate inputGate : inputGatesByGateIndex.values()) {
             inputGate.sendTaskEvent(event);
+        }
+    }
+
+    public void resumeGateConsumption() throws IOException {
+        for (Map.Entry<Integer, InputGate> entry : inputGatesByGateIndex.entrySet()) {
+            entry.getValue().resumeGateConsumption();
         }
     }
 
